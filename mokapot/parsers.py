@@ -8,10 +8,16 @@ import pandas as pd
 from . import utils
 from .dataset import LinearPsmDataset
 
+# Import dask if available:
+try:
+    import dask.dataframe as dd
+except ImportError:
+    dd = None
+
 LOGGER = logging.getLogger(__name__)
 
 # Functions -------------------------------------------------------------------
-def read_pin(pin_files, to_df=False):
+def read_pin(pin_files, to_df=False, use_dask=False):
     """
     Read Percolator input (PIN) tab-delimited files.
 
@@ -32,13 +38,21 @@ def read_pin(pin_files, to_df=False):
     Additionally, mokapot does not currently support specifying a
     default direction or feature weights in the PIN file itself.
 
+    For extremely large datasets, mokapot can use `dask
+    <https://dask.org/>`_ as a backend, allowing some or all of the data
+    to be stored on-disk and enabling cluster parallelization.
+
     Parameters
     ----------
     pin_files : str or tuple of str
         One or more PIN files to read.
     to_df : bool
-        Return a :py:class:`pandas.DataFrame` instead of a
+        Return a :py:class:`pandas.DataFrame` (or a
+        py:class:`dask.dataframe.DataFrame`) instead of a
         py:class:`~mokapot.dataset.LinearPsmDataset`.
+    use_dask : bool
+        Use a :py:class:`dask.dataframe.DataFrame` instead of a
+        :py:class:`pandas.DataFrame`
 
     Returns
     -------
@@ -46,8 +60,13 @@ def read_pin(pin_files, to_df=False):
         A :py:class:`~mokapot.dataset.LinearPsmDataset` object
         containing the PSMs from all of the PIN files.
     """
+    if dd is not None and use_dask:
+        df = dd
+    else:
+        df = pd
+
     logging.info("Parsing PSMs...")
-    pin_df = pd.concat([read_percolator(f)
+    pin_df = df.concat([read_percolator(f, use_dask)
                         for f in utils.tuplize(pin_files)])
 
     # Find all of the necessary columns, case-insensitive:
@@ -91,7 +110,7 @@ def read_pin(pin_files, to_df=False):
 
 
 # Utility Functions -----------------------------------------------------------
-def read_percolator(perc_file):
+def read_percolator(perc_file, use_dask=False):
     """
     Read a Percolator tab-delimited file.
 
@@ -103,20 +122,28 @@ def read_percolator(perc_file):
     ----------
     perc_file : str
         The file to parse.
+    use_dask : bool
+        Return a :py:class:`dask.dataframe.DataFrame` instead of a of a
+        :py:class:`pandas.DataFrame`
 
     Returns
     -------
-    pandas.DataFrame
+    pandas.DataFrame or dask.dataframe.DataFrame
         A DataFrame of the parsed data.
     """
+    if dd is not None and use_dask:
+        df = dd
+    else:
+        df = pd
+
     LOGGER.info("Reading %s...", perc_file)
-    pin_df = pd.read_csv(perc_file,
+    with open(perc_file) as perc:
+        header = perc.readline().replace("\n", "").split("\t")
+
+    pin_df = df.read_csv(perc_file,
                          sep="\t",
-                         usecols=lambda x: True,
-                         header=None,
-                         dtype=str,
+                         usecols=header,
                          low_memory=True)
 
-    pin_df.columns = pin_df.loc[0, :].values
-    pin_df.drop(index=0, inplace=True)
-    return pin_df.apply(pd.to_numeric, errors="ignore").reset_index(drop=True)
+    pin_df.columns = header
+    return pin_df

@@ -19,10 +19,10 @@ Instances of these classes are required to train a
 function, or :doc:`assign confidence estimates <confidence>`.
 """
 import logging
+from warnings import warn
 from abc import ABC, abstractmethod
 
 import numpy as np
-import pandas as pd
 
 from . import qvalues
 from . import utils
@@ -93,7 +93,12 @@ class PsmDataset(ABC):
                  other_columns,
                  copy_data):
         """Initialize an object"""
-        self._data = psms.copy(deep=copy_data)
+        try:
+            self._data = psms.copy(deep=copy_data)
+        except TypeError:
+            self._data = psms.copy()
+            if copy_data:
+                warn("'copy_data=True' is not available for dask DataFrames.")
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
@@ -128,7 +133,7 @@ class PsmDataset(ABC):
 
     @property
     def data(self):
-        """The full collection of PSMs as a :py:class:`pandas.DataFrame`."""
+        """The full collection of PSMs."""
         return self._data
 
     @property
@@ -139,20 +144,17 @@ class PsmDataset(ABC):
 
     @property
     def metadata(self):
-        """A :py:class:`pandas.DataFrame` of the metadata."""
+        """The PSM metadata."""
         return self.data.loc[:, self._metadata_columns]
 
     @property
     def features(self):
-        """A :py:class:`pandas.DataFrame` of the features."""
+        """The PSM features."""
         return self.data.loc[:, self._feature_columns]
 
     @property
     def spectra(self):
-        """
-        A :py:class:`pandas.DataFrame` of the columns that uniquely
-        identify a mass spectrum.
-        """
+        """The unique mass spectrum identitifiers for each PSM."""
         return self.data.loc[:, self._spectrum_columns]
 
     @property
@@ -188,19 +190,16 @@ class PsmDataset(ABC):
         best_positives = 0
         new_labels = None
         for desc in (True, False):
-            labs = self.features.apply(self._update_labels,
-                                       eval_fdr=eval_fdr,
-                                       desc=desc)
+            for feat in self.features:
+                labs = self._update_labels(self.features.loc[:, feat],
+                                           eval_fdr=eval_fdr, desc=desc)
+                num_passing = np.array(labs == 1).sum()
 
-            num_passing = (labs == 1).sum()
-            feat_idx = num_passing.idxmax()
-            num_passing = num_passing[feat_idx]
-
-            if num_passing > best_positives:
-                best_positives = num_passing
-                best_feat = feat_idx
-                new_labels = labs.loc[:, feat_idx].values
-                best_desc = desc
+                if num_passing > best_positives:
+                    best_positives = num_passing
+                    best_feat = feat
+                    new_labels = labs
+                    best_desc = desc
 
         if best_feat is None:
             raise RuntimeError("No PSMs found below the 'eval_fdr'.")
@@ -257,7 +256,14 @@ class PsmDataset(ABC):
             split.
         """
         cols = list(self._spectrum_columns)
-        scans = list(self.data.groupby(cols, sort=False).indices.values())
+        grouped = self.data.groupby(cols, sort=False)
+
+        try:
+            scans = list(grouped.indices.values())
+        except AttributeError:
+            scans = grouped.apply(lambda x: x.index, meta=("x", "int64"))
+            scans = list(scans.compute())
+
         np.random.shuffle(scans)
         scans = list(scans)
 
@@ -275,9 +281,17 @@ class PsmDataset(ABC):
 class LinearPsmDataset(PsmDataset):
     """Store and analyze a collection of PSMs
 
-    This class stores a collection of PSMs from data-dependent
-    acquisition proteomics experiments and defines the necessary fields
+    Stores a collection of PSMs from data-dependent acquisition
+    proteomics experiments and defines the necessary fields
     for mokapot analysis.
+
+    This class can be initialized wither with either a
+    :py:class:`pandas.DataFrame` or a
+    :py:class:`dask.dataset.DataFrame` of PSMs. Pandas should be the
+    prefe choice for most analyses, because it is much faster if your
+    data can fit into memory. However, using the dask backend allows
+    for out-of-memory operations, meaning large datasets can be handled
+    and optionally. distributed across a cluster.
 
     Parameters
     ----------
@@ -357,27 +371,31 @@ class LinearPsmDataset(PsmDataset):
                          copy_data=copy_data)
 
         self._data[target_column] = self._data[target_column].astype(bool)
-        num_targets = sum(self.targets)
-        num_decoys = sum(~self.targets)
+        self._num_targets = np.array(self.targets).sum()
+        self._num_decoys = np.array(~self.targets).sum()
         LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.",
-                    num_targets, num_targets)
+                    self._num_targets, self._num_targets)
 
-        if not num_targets:
+        if not self._num_targets:
             raise ValueError("No target PSMs were detected.")
-        if not num_decoys:
+        if not self._num_decoys:
             raise ValueError("No decoy PSMs were detected.")
-        if not self.data.shape[0]:
+
+        if len(self.data) == 0:
             raise ValueError("No PSMs were detected.")
 
     def __repr__(self):
         """How to print the class"""
+        features = "\n\t\t".join(self._feature_columns)
+        metadata = "\n\t\t".join(self._metadata_columns)
         return (f"A mokapot.dataset.LinearPsmDataset with {len(self.data)} "
                 "PSMs:\n"
-                f"\t- target PSMs: {self.targets.sum()}\n"
-                f"\t- decoy PSMs: {self.targets.sum()}\n"
+                f"\t- target PSMs: {self._num_targets}\n"
+                f"\t- decoy PSMs: {self._num_decoys}\n"
                 f"\t- unique spectra: {len(self.spectra.drop_duplicates())}\n"
                 f"\t- unique peptides: {len(self.peptides.drop_duplicates())}\n"
-                f"\t- features: {self._feature_columns}")
+                f"\t- metadata:\n\t\t{metadata}\n"
+                f"\t- features:\n\t\t{features}")
 
     @property
     def targets(self):
@@ -414,10 +432,11 @@ class LinearPsmDataset(PsmDataset):
             training. Typically, 0 is reserved for targets, below a
             specified FDR threshold.
         """
-        qvals = qvalues.tdc(scores, target=self.targets, desc=desc)
-        unlabeled = np.logical_and(qvals > eval_fdr, self.targets)
+        targets = np.array(self.targets)
+        qvals = qvalues.tdc(scores, target=targets, desc=desc)
+        unlabeled = np.logical_and(qvals > eval_fdr, targets)
         new_labels = np.ones(len(qvals))
-        new_labels[~self.targets] = -1
+        new_labels[~targets] = -1
         new_labels[unlabeled] = 0
         return new_labels
 
@@ -498,7 +517,7 @@ class CrossLinkedPsmDataset(PsmDataset):
     :meta private:
     """
     def __init__(self,
-                 psms: pd.DataFrame,
+                 psms,
                  spectrum_columns,
                  target_columns,
                  peptide_columns,
