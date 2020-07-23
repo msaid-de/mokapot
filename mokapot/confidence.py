@@ -24,6 +24,13 @@ from triqler import qvality
 
 from . import qvalues
 
+# Import dask if available:
+try:
+    import dask.array as da
+except ImportError:
+    dd = None
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -41,13 +48,16 @@ class Confidence():
                    "csms": "Cross-Linked PSMs",
                    "peptide_pairs": "Peptide Pairs"}
 
-    def __init__(self, psms, scores):
+    def __init__(self, psms, scores, desc):
         """
         Initialize a PsmConfidence object.
         """
         self._data = psms.metadata
-        self._data[len(psms.columns)] = scores
-        self._score_column = self._data.columns[-1]
+        self._score_column = _new_column("score", self._data)
+
+        # Flip sign of scores if not descending
+        self._data = _assign(self._data, self._score_column,
+                             scores * (desc*2 - 1))
 
         # This attribute holds the results as DataFrames:
         self._confidence_estimates = {}
@@ -108,7 +118,8 @@ class Confidence():
             The columns that define a PSM.
         """
         psm_idx = _groupby_max(self._data, psm_columns, self._score_column)
-        self._data = self._data.loc[psm_idx]
+        self._data = self._data.loc[psm_idx, :]
+
 
     def plot_qvalues(self, level, threshold=0.1, ax=None, **kwargs):
         """
@@ -173,12 +184,24 @@ class LinearConfidence(Confidence):
     def __init__(self, psms, scores, desc=True, eval_fdr=0.01):
         """Initialize a a LinearPsmConfidence object"""
         LOGGER.info("=== Assigning Confidence ===")
-        super().__init__(psms, scores)
-        self._data[len(self._data.columns)] = psms.targets
-        self._target_column = self._data.columns[-1]
+        super().__init__(psms, scores, desc)
+        self._target_column = _new_column("target", self._data)
+        self._data[self._target_column] = psms.targets
         self._psm_columns = psms._spectrum_columns
         self._peptide_column = psms._peptide_column
         self._eval_fdr = eval_fdr
+
+        # Go ahead and shuffle so ties are broken randomly:
+        self._data = self._data.sample(frac=1)
+
+        # Set an index:
+        self._data = self._data.set_index(-1 * self._data[self._score_column])
+
+        score_index = np.arange(len(self._data))
+        score_index_name = _new_column("score_index", self._data)
+        self._data = _assign(self._data, score_index_name, score_index)
+        self._data = self._data.set_index(score_index_name)
+
 
         LOGGER.info("Performing target-decoy competition...")
         LOGGER.info("Keeping the best match per %s columns...",
@@ -192,8 +215,10 @@ class LinearConfidence(Confidence):
 
     def __repr__(self):
         """How to print the class"""
-        pass_psms = (self.psms["mokapot q-value"] <= self._eval_fdr).sum()
-        pass_peps = (self.peptides["mokapot q-value"] <= self._eval_fdr).sum()
+        pass_psms = np.array(self.psms["mokapot q-value"]
+                             <= self._eval_fdr).sum()
+        pass_peps = np.array(self.peptides["mokapot q-value"]
+                             <= self._eval_fdr).sum()
 
         return ("A mokapot.confidence.LinearConfidence object:\n"
                 f"\t- PSMs at q<={self._eval_fdr:g}: {pass_psms}\n"
@@ -211,30 +236,49 @@ class LinearConfidence(Confidence):
         peptide_idx = _groupby_max(self._data, self._peptide_column,
                                    self._score_column)
 
-        peptides = self._data.loc[peptide_idx]
+        peptides = self._data.loc[peptide_idx, :]
         LOGGER.info("  - Found %i unique peptides.", len(peptides))
 
         for level, data in zip(("PSMs", "peptides"), (self._data, peptides)):
             scores = data.loc[:, self._score_column].values
             targets = data.loc[:, self._target_column].astype(bool).values
 
+            # Estimate q-values and assign to dataframe
             LOGGER.info("Assiging q-values to %s.", level)
-            data["mokapot q-value"] = qvalues.tdc(scores, targets, desc)
+            qvals = qvalues.tdc(scores, targets, desc=True)
+            data = _assign(data, "mokapot q-value", qvals)
 
-            data = data.loc[targets, :] \
-                       .sort_values(self._score_column, ascending=(not desc)) \
-                       .reset_index(drop=True) \
-                       .drop(self._target_column, axis=1) \
-                       .rename(columns={self._score_column: "mokapot score"})
+            # Make the table prettier
+            not_target_cols = [c for c in data.columns
+                               if c != self._target_column]
+            data = (data.loc[targets, :]
+                        .reset_index(drop=True)
+                        .loc[:, not_target_cols]
+                        .rename(columns={self._score_column: "mokapot score"}))
 
-            LOGGER.info("  - Found %i %s with q<=%g",
-                        (data["mokapot q-value"] <= self._eval_fdr).sum(),
+            # Set scores to be the correct sign again:
+            data["mokapot score"] = data["mokapot score"] * (desc*2 - 1)
+
+            # A nice logging update.
+            pass_targets = (qvals[targets] <= self._eval_fdr).sum()
+            LOGGER.info("  - Found %i %s with q<=%g", pass_targets,
                         level, self._eval_fdr)
 
+            # Calculate PEPs
             LOGGER.info("Assiging PEPs to %s.", level)
             _, pep = qvality.getQvaluesFromScores(scores[targets],
                                                   scores[~targets])
-            data["mokapot PEP"] = pep
+
+            # Assign PEPs to dataframe
+            data = _assign(data, "mokapot PEP", pep)
+
+            # Sort values
+            try:
+                data = data.sort_values("mokapot score", ascending=(not desc))
+            except AttributeError:
+                logging.info("Results are not sorted when using the "
+                             "dask backend.")
+
             self._confidence_estimates[level.lower()] = data
 
 
@@ -363,11 +407,58 @@ def plot_qvalues(qvalues, threshold=0.1, ax=None, **kwargs):
     return ax
 
 
+# Utility Functions -----------------------------------------------------------
 def _groupby_max(df, by_cols, max_col):
-    """Quickly get the indices for the maximum value of col"""
-    idx = df.sample(frac=1) \
-            .sort_values(list(by_cols)+[max_col], axis=0) \
-            .drop_duplicates(list(by_cols), keep="last") \
-            .index
+    """
+    Quickly get the indices for the maximum value of col.
+
+    Here the sampling is needed to ensure ties are broken
+    randomly. Unfortunatly, this makes the dask backend
+    very slow.
+    """
+    # Sometimes we can skip this (such as when looking at PSMs searched)
+    # using a concatenated database:
+    if len(df) == len(df.drop_duplicates(list(by_cols))):
+        return df.index
+
+    try:
+        #raise AttributeError
+        # This is much faster for smallish pandas dataframes:
+        idx = df.sort_values(list(by_cols)+[max_col], axis=0) \
+                .drop_duplicates(list(by_cols), keep="last") \
+                .index
+    except AttributeError:
+        # Dask does not have 'sort_values':
+        idx = (df.loc[:, list(by_cols)+[max_col]]
+                 .groupby(list(by_cols))
+                 .idxmax()
+                 .values
+                 .compute()
+                 .flatten())
 
     return idx
+
+
+def _assign(df, name, vals):
+    """Assign a new column"""
+    try:
+        df[name] = vals
+    except TypeError:
+        # Assumes partitions are sized evenly.
+        chunks = len(vals) // df.npartitions
+        vals = da.from_array(vals, chunks=chunks)
+        df[name] = vals
+
+    return df
+
+
+def _new_column(name, df):
+    """Add a new column, ensuring a unique name"""
+    new_name = name
+    cols = set(df.columns)
+    i = 0
+    while new_name in cols:
+        new_name = name + "_" + str(i)
+        i += 1
+
+    return new_name
