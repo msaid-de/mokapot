@@ -1,6 +1,7 @@
 """
 This module contains the parsers for reading in PSMs
 """
+import gzip
 import logging
 
 import pandas as pd
@@ -137,7 +138,12 @@ def read_percolator(perc_file, use_dask=False):
         df = pd
 
     LOGGER.info("Reading %s...", perc_file)
-    with open(perc_file) as perc:
+    if perc_file.endswith(".gz"):
+        fopen = gzip.open
+    else:
+        fopen = open
+
+    with fopen(perc_file, "rt") as perc:
         header = perc.readline().replace("\n", "").split("\t")
 
     pin_df = df.read_csv(perc_file,
