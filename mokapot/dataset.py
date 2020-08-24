@@ -30,7 +30,6 @@ from .confidence import LinearConfidence, CrossLinkedConfidence
 
 LOGGER = logging.getLogger(__name__)
 
-
 # Classes ---------------------------------------------------------------------
 class PsmDataset(ABC):
     """
@@ -195,8 +194,11 @@ class PsmDataset(ABC):
         best_feat = None
         best_positives = 0
         new_labels = None
+        LOGGER.info("Finding the best feature...")
         for desc in (True, False):
-            for feat in self.features:
+            msg = {True: "descending", False: "ascending"}
+            LOGGER.info("- Testing features in %s order...", msg[desc])
+            for feat in utils.pbar(self.features.columns):
                 labs = self._update_labels(self.features.loc[:, feat],
                                            eval_fdr=eval_fdr, desc=desc)
                 num_passing = np.array(labs == 1).sum()

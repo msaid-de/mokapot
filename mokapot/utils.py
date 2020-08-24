@@ -1,25 +1,38 @@
 """
 Utility functions
 """
+import io
 import itertools
+import logging
 
+import tqdm
 import numpy as np
 import pandas as pd
 
-def unnormalize_weights(weights, intercept, feat_mean, feat_std):
-    """Take in normalized weights, return unnormalized weights"""
-    new_weights = np.divide(weights, feat_std,
-                            out=np.zeros_like(weights),
-                            where=(feat_std != 0))
+LOGGER = logging.getLogger(__name__)
 
-    int_sub = np.divide(feat_mean, feat_std,
-                        out=np.zeros_like(feat_mean),
-                        where=(feat_std != 0))
 
-    intercept = intercept - (int_sub * weights).sum()
+# Classes ---------------------------------------------------------------------
+class TqdmToLogger(io.StringIO):
+    """Send tqdm progress bars through the logging module."""
+    buf = ""
 
-    return new_weights, intercept
+    def __init__(self, level=logging.INFO):
+        super(TqdmToLogger, self).__init__()
+        self.logger = LOGGER
+        self.level = level
 
+    def write(self, buf):
+        self.buf = buf.strip("\r\n\t ")
+
+    def flush(self):
+        self.logger.log(self.level, self.buf)
+
+
+# Functions -------------------------------------------------------------------
+def pbar(*args, **kwargs):
+    """Create a progress bar"""
+    return tqdm.tqdm(*args, **kwargs, ascii=True, file=TqdmToLogger())
 
 def flatten(split):
     """Get the indices from split"""

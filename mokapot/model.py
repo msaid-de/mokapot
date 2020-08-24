@@ -209,35 +209,9 @@ class Model():
                             "The learned models may be unstable.",
                             len(psms.data))
 
-        # Choose the initial direction
-        LOGGER.info("Finding initial direction...")
-        best_feat, feat_pass, feat_labels, _ = psms._find_best_feature(train_fdr)
-        if direction is None and not self.is_trained:
-            LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
-                        best_feat, feat_pass, train_fdr)
-            start_labels = feat_labels
-        elif self.is_trained:
-            scores = self.estimator.decision_function(psms.features)
-            start_labels = psms._update_labels(scores, eval_fdr=train_fdr)
-            LOGGER.info("  - The pretrained model found %i PSMs at q<=%g.",
-                        (start_labels == 1).sum(), train_fdr)
-        else:
-            desc_labels = psms._update_labels(psms.features[direction].values,
-                                              train_fdr, desc=True)
-            asc_labels = psms._update_labels(psms.features[direction].values,
-                                             train_fdr, desc=False)
-
-            if (desc_labels == 1).sum() >= (asc_labels == 1).sum():
-                start_labels = desc_labels
-            else:
-                start_labels = asc_labels
-
-            LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
-                        direction, (start_labels == 1).sum(), train_fdr)
-
-        if not (start_labels == 1).sum():
-            raise RuntimeError(f"No PSMs accepted at train_fdr={train_fdr}. "
-                               "Consider changing it to a higher value.")
+        # Get the starting labels
+        start_labels, feat_pass = _get_starting_labels(psms, direction, self,
+                                                       train_fdr)
 
         # Normalize Features
         self.features = psms.features.columns.tolist()
@@ -388,8 +362,9 @@ class DaskModel(Model):
         grid = {"estimator__" + k: v for k, v in PERC_GRID.items()}
 
         svm_model = Incremental(lm.SGDClassifier(loss="squared_hinge"))
-        estimator = dms.GridSearchCV(svm_model, param_grid=grid, cv=3,
-                                     n_jobs=1)
+        estimator = dms.IncrementalSearchCV(svm_model, parameters=grid,
+                                            n_initial_parameters="grid",
+                                            decay_rate=None)
         super().__init__(estimator, scaler=dpp.StandardScaler())
 
     def fit(self, psms, **kwargs):
@@ -416,11 +391,11 @@ class DaskModel(Model):
         self
         """
         num = len(psms.features)
-        params = self.estimator.get_params()["param_grid"]
+        params = self.estimator.get_params()["parameters"]
         weights = params["estimator__class_weight"]
         new_weights = [{k: v/num for k, v in x.items()} for x in weights]
         new_params = {"estimator__estimator__alpha":  1/num,
-                      "param_grid": {"estimator__class_weight": new_weights}}
+                      "parameters": {"estimator__class_weight": new_weights}}
 
         self.estimator.set_params(**new_params)
         return super().fit(psms, **kwargs)
@@ -509,11 +484,58 @@ def load_model(model_file):
 
 
 # Private Functions -----------------------------------------------------------
-def _get_starting_labels():
+def _get_starting_labels(psms, direction, model, train_fdr):
     """
     Get labels using the initial direction.
+
+    Parameters
+    ----------
+    psms : a collection of PSMs
+        The PsmDataset object
+    direction : str or None
+        A default direction, if provided.
+    model : mokapot.Model
+        A model object (this is likely `self`)
+    train_fdr : float
+        The FDR to evaluate at.
+
+    Returns
+    -------
+    start_labels : np.array
+        The starting labels for model training.
+    feat_pass : int
+        The number of passing PSMs with the best feature.
     """
-    pass
+    LOGGER.info("Finding initial direction:")
+    best_feat, feat_pass, feat_labels, _ = psms._find_best_feature(train_fdr)
+    if direction is None and not model.is_trained:
+        LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
+                    best_feat, feat_pass, train_fdr)
+        start_labels = feat_labels
+    elif model.is_trained:
+        scores = model.estimator.decision_function(psms.features)
+        start_labels = psms._update_labels(scores, eval_fdr=train_fdr)
+        LOGGER.info("  - The pretrained model found %i PSMs at q<=%g.",
+                    (start_labels == 1).sum(), train_fdr)
+    else:
+        desc_labels = psms._update_labels(psms.features[direction].values,
+                                          train_fdr, desc=True)
+        asc_labels = psms._update_labels(psms.features[direction].values,
+                                         train_fdr, desc=False)
+
+        if (desc_labels == 1).sum() >= (asc_labels == 1).sum():
+            start_labels = desc_labels
+        else:
+            start_labels = asc_labels
+
+        LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
+                    direction, (start_labels == 1).sum(), train_fdr)
+
+    if not (start_labels == 1).sum():
+        raise RuntimeError(f"No PSMs accepted at train_fdr={train_fdr}. "
+                           "Consider changing it to a higher value.")
+
+    return start_labels, feat_pass
 
 
 def _find_hyperparameters():
@@ -522,17 +544,39 @@ def _find_hyperparameters():
     """
     pass
 
-def _compute_chunks():
+def _compute_chunks(base, *args):
     """
     Compute the chunks if necessary.
+
+    Parameters
+    ----------
+    base : array-like, shape = [n_samples, n_features]
+        If a dask array, compute its chunk sizes.
+    *args : array-like, shape = [n_samples]
+        Arrays to chunk in the same way as `base`.
+
+    Returns
+    -------
+    list of arrays
+        base and the other arguments.
     """
-    pass
+    try:
+        base.compute_chunk_sizes()
+        args = [_set_chunks(x, base.chunks[0]) for x in args]
+    except AttributeError:
+        pass
+
+    return [base] + list(args)
 
 
-def _set_chunks():
+
+def _set_chunks(chunks, *args):
     """
     Set the chunks for an array.
     """
+    for array in args:
+        yield 
+
 
 def _get_weights(model, features):
     """
