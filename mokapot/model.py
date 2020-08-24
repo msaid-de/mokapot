@@ -8,6 +8,11 @@ allowing a wide variety of models to be used. Once initialized,
 the :py:meth:`Model.fit` method trains the underyling classifier
 using :doc:`a collection of PSMs <dataset>` with this iterative
 approach.
+
+Additional subclasses of the :py:class:`Model` class are available for
+typical use cases. For example, use :py:class:`PercolatorModel` if you
+want to emulate the behavior of Percolator. If you are using the dask
+backend, consider using the :py:class:`DaskModel` class.
 """
 import logging
 import pickle
@@ -16,9 +21,19 @@ import numpy as np
 import pandas as pd
 import sklearn.base as base
 import sklearn.svm as svm
+import sklearn.linear_model as lm
 import sklearn.model_selection as ms
 import sklearn.preprocessing as pp
 from sklearn.exceptions import NotFittedError
+
+try:
+    import dask.array as da
+    import dask_ml.model_selection as dms
+    import dask_ml.preprocessing as dpp
+    from dask_ml.wrappers import Incremental
+    DASK_AVAIL = True
+except ImportError:
+    DASK_AVAIL = False
 
 LOGGER = logging.getLogger(__name__)
 
@@ -33,9 +48,7 @@ class Model():
     """
     A machine learning model to re-score PSMs.
 
-    A linear support vector machine (SVM) model is used by default in an
-    attempt emulate the SVM models in Percolator. Alternatively, any
-    classifier with a `scikit-learn estimator interface
+    Any classifier with a `scikit-learn estimator interface
     <https://scikit-learn.org/stable/developers/develop.html#estimators>`_
     can be used. This class also supports hyper parameter optimization
     using classes from the :py:mod:`sklearn.model_selection`
@@ -58,8 +71,6 @@ class Model():
         , implementing :code:`fit_transform()` and :code:`transform()` methods.
         Alternatively, the string :code:`"as-is"` leaves the features in
         their original scale.
-    is_trained : bool, optional
-        Indicates if the model has already been trained.
 
     Attributes
     ----------
@@ -73,17 +84,18 @@ class Model():
     is_trained : bool
         Indicates if the model has been trained.
     """
-    def __init__(self, estimator=None, scaler=None, is_trained=False):
+    def __init__(self, estimator=None, scaler=None):
         """Initialize a Model object"""
         if estimator is None:
             svm_model = svm.LinearSVC(dual=False)
-            estimator = ms.GridSearchCV(svm_model, param_grid=PERC_GRID,
+            estimator = ms.GridSearchCV(svm_model,
+                                        param_grid=PERC_GRID,
                                         refit=False,
                                         cv=3)
 
         self.estimator = base.clone(estimator)
         self.features = None
-        self.is_trained = is_trained
+        self.is_trained = False
 
         if scaler == "as-is":
             self.scaler = DummyScaler()
@@ -95,7 +107,6 @@ class Model():
     def __repr__(self):
         """How to print the class"""
         trained = {True: "A trained", False: "An untrained"}
-
         return (f"{trained[self.is_trained]} mokapot.model.Model object:\n"
                 f"\testimator: {self.estimator}\n"
                 f"\tscaler: {self.scaler}\n"
@@ -182,12 +193,18 @@ class Model():
             selects the feature that finds the most PSMs below the
             `train_fdr`. This
             will be ignored in the case the model is already trained.
+
+        Returns
+        -------
+        self
         """
-        if not sum(psms.targets):
+        if not psms.targets.sum():
             raise ValueError("No target PSMs were available for training.")
-        elif not sum(~psms.targets):
+
+        if not (~psms.targets).sum():
             raise ValueError("No decoy PSMs were available for training.")
-        elif len(psms.data) <= 200:
+
+        if len(psms.data) <= 200:
             logging.warning("Few PSMs are available for model training (%i). "
                             "The learned models may be unstable.",
                             len(psms.data))
@@ -224,14 +241,35 @@ class Model():
 
         # Normalize Features
         self.features = psms.features.columns.tolist()
-        norm_feat = self.scaler.fit_transform(psms.features)
+        norm_feat = self.scaler.fit_transform(psms.features.values)
+
+        # For dask arrays, we sometimes need to compute chunk sizes.
+        try:
+            norm_feat.compute_chunk_sizes()
+            start_labels = da.from_array(start_labels,
+                                         chunks=norm_feat.chunks[0])
+        except AttributeError:
+            pass
 
         # Initialize Model and Training Variables
         if hasattr(self.estimator, "estimator"):
             LOGGER.info("Selecting hyperparameters...")
-            cv_samples = norm_feat[feat_labels.astype(bool), :]
-            cv_targ = (feat_labels[feat_labels.astype(bool)]+1)/2
-            self.estimator.fit(cv_samples, cv_targ)
+            cv_samples = norm_feat[start_labels.astype(bool), :]
+            cv_targ = (start_labels[start_labels.astype(bool)]+1)/2
+
+            # Need chunk sizes again:
+            try:
+                cv_samples.compute_chunk_sizes()
+                cv_targ.compute_chunk_sizes()
+            except AttributeError:
+                pass
+
+            # Some estimators may use partial_fit() which needs classes:
+            if isinstance(self.estimator.estimator, Incremental):
+                self.estimator.fit(cv_samples, cv_targ, classes=[0, 1])
+            else:
+                self.estimator.fit(cv_samples, cv_targ)
+
             best_params = self.estimator.best_params_
             model = self.estimator.estimator
             model.set_params(**best_params)
@@ -247,9 +285,12 @@ class Model():
             # Fit the model
             samples = norm_feat[target.astype(bool), :]
             iter_targ = (target[target.astype(bool)]+1)/2
-            model.fit(samples, iter_targ)
 
-            # Update scores
+            try:
+                model.fit(samples, iter_targ)
+            except ValueError:
+                model.fit(samples, iter_targ, classes=[0, 1])
+
             scores = model.decision_function(norm_feat)
 
             # Update target
@@ -257,6 +298,14 @@ class Model():
             num_passed.append((target == 1).sum())
             LOGGER.info("  - Iteration %i: %i training PSMs passed.",
                         i, num_passed[i])
+
+            # target need to be a dask array when samples is a dask array
+            try:
+                target = da.from_array(target, chunks=norm_feat.chunks[0])
+            except AttributeError:
+                pass
+
+            self._update_model(norm_feat, target, model)
 
         # If the model performs worse than what was initialized:
         if (num_passed[-1] < (start_labels == 1).sum()
@@ -273,6 +322,107 @@ class Model():
 
         self.is_trained = True
         LOGGER.info("Done training.")
+        return self
+
+    def _update_model(self, features, targets, model):
+        """
+        Utility method to update the model on each iteration.
+
+        This is needed is cases where a parameter depends on the data itself.
+        For example, to make the SGDClassifier behave like LinearSVC, their
+        respective C and alpha parameters much be harmonized so that:
+        alpha = 1 / (C * n_samples). Because n_samples changes with each
+        iteration, it is necessary to update each time.
+
+        Parameters
+        ----------
+        features : array-like
+            The features from the dataset.
+        targets : array-like
+            The new labels for the dataset.
+        model : estimator object
+            The model to update.
+        """
+        return
+
+
+class DaskModel(Model):
+    """
+    A model for when dask is used as a backend.
+
+    Create an estimation of Percolator's linear support vector machine
+    models using stochastic gradient descent. This model is suitable
+    when dask has been employed to create the
+    :doc:`collection of PSMs <dataset>`.
+
+    scaler : scaler object or "as-is", optional
+        Defines how features are normalized before model fitting and
+        prediction. The default, :code:`None`, subtracts the mean and scales
+        to unit variance using
+        :py:class:`dask_ml.preprocessing.StandardScaler`.
+        Other scalers should follow the `scikit-learn transformer
+        interface
+        <https://scikit-learn.org/stable/developers/develop.html#apis-of-scikit-learn-objects>`_
+        , implementing :code:`fit_transform()` and :code:`transform()` methods.
+        Alternatively, the string :code:`"as-is"` leaves the features in
+        their original scale.
+
+    Attributes
+    ----------
+    estimator : classifier object
+        The classifier used to re-score PSMs.
+    scaler : scaler object
+        The scaler used to normalize features.
+    features : list of str or None
+        The name of the features used to fit the model. None if the
+        model has yet to be trained.
+    is_trained : bool
+        Indicates if the model has been trained.
+    """
+    def __init__(self, scaler=None):
+        """Initialize a DaskModel"""
+        if not DASK_AVAIL:
+            raise RuntimeError("dask and dask-ml are needed to use "
+                               "a DaskModel")
+
+        grid = {"estimator__" + k: v for k, v in PERC_GRID.items()}
+
+        svm_model = Incremental(lm.SGDClassifier(loss="squared_hinge"))
+        estimator = dms.GridSearchCV(svm_model, param_grid=grid, cv=3)
+        super().__init__(estimator, scaler=dpp.StandardScaler())
+
+    def fit(self, psms, **kwargs):
+        """
+        Fit the machine learning model using the Percolator algorithm.
+
+        The model if trained by iteratively learning to separate decoy
+        PSMs from high-scoring target PSMs. By default, an initial
+        direction is chosen as the feature that best separates target
+        from decoy PSMs. A false discovery rate threshold is used to
+        define how high a target must score to be used as a positive
+        example in the next training iteration.
+
+        Parameters
+        ----------
+        psms : PsmDataset object
+            :doc:`A collection of PSMs <dataset>` from which to train
+            the model.
+        **kwargs : dict
+            Keyword arguements for fitting (see :py:fun:`Model.fit()`).
+
+        Returns
+        -------
+        self
+        """
+        num = len(psms.features)
+        params = self.estimator.get_params()["param_grid"]
+        weights = params["estimator__class_weight"]
+        new_weights = [{k: v/num for k, v in x.items()} for x in weights]
+        new_params = {"estimator__estimator__alpha":  1/num,
+                      "param_grid": {"estimator__class_weight": new_weights}}
+
+        self.estimator.set_params(**new_params)
+        return super().fit(psms, **kwargs)
 
 
 class DummyScaler():
@@ -340,14 +490,13 @@ def load_model(model_file):
         logging.info("Loading the Percolator model.")
 
         weight_cols = [c for c in weights.index if c != "m0"]
-        model = Model(estimator=svm.LinearSVC(), scaler="as-is",
-                      is_trained=True)
-
+        model = Model(estimator=svm.LinearSVC(), scaler="as-is")
         weight_vals = weights.loc[weight_cols]
         weight_vals = weight_vals[np.newaxis, :]
         model.estimator.coef_ = weight_vals
         model.estimator.intercept_ = weights.loc["m0"]
         model.features = weight_cols
+        model.is_trained = True
 
     # Then try loading it with pickle:
     except UnicodeDecodeError:
@@ -357,6 +506,32 @@ def load_model(model_file):
 
     return model
 
+
+# Private Functions -----------------------------------------------------------
+def _get_starting_labels():
+    """
+    Get labels using the initial direction.
+    """
+    pass
+
+
+def _find_hyperparameters():
+    """
+    Find the hyperparameters for the model.
+    """
+    pass
+
+def _compute_chunks():
+    """
+    Compute the chunks if necessary.
+    """
+    pass
+
+
+def _set_chunks():
+    """
+    Set the chunks for an array.
+    """
 
 def _get_weights(model, features):
     """

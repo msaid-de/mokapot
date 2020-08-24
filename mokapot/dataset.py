@@ -100,6 +100,8 @@ class PsmDataset(ABC):
             if copy_data:
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
+        self._data = self._data.sample(frac=1)
+
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
 
@@ -287,15 +289,15 @@ class LinearPsmDataset(PsmDataset):
 
     This class can be initialized wither with either a
     :py:class:`pandas.DataFrame` or a
-    :py:class:`dask.dataset.DataFrame` of PSMs. Pandas should be the
-    prefe choice for most analyses, because it is much faster if your
+    :py:class:`dask.dataframe.DataFrame` of PSMs. Pandas should be the
+    prefered choice for most analyses, because it is much faster if your
     data can fit into memory. However, using the dask backend allows
     for out-of-memory operations, meaning large datasets can be handled
-    and optionally. distributed across a cluster.
+    and, optionally, distributed across a cluster.
 
     Parameters
     ----------
-    psms : pandas.DataFrame
+    psms : DataFrame object
         A collection of PSMs.
     target_column : str
         The column specifying whether each PSM is a target (`True`) or a
@@ -323,17 +325,18 @@ class LinearPsmDataset(PsmDataset):
     copy_data : bool, optional
         If true, a deep copy of `psms` is created, so that changes to the
         original collection of PSMs is not propagated to this object. This
-        uses more memory, but is safer since it prevents accidental
-        modification of the underlying data.
+        uses more memory, but is safer because it prevents accidental
+        modification of the underlying data. This option is always
+        :code:`False` when `psms` is a py:class:`dask.dataframe.DataFrame`.
 
     Attributes
     ----------
-    data : pandas.DataFrame
-    metadata : pandas.DataFrame
-    features : pandas.DataFrame
-    spectra : pandas.DataFrame
-    peptides : pandas.DataFrame
-    targets : numpy.ndarray
+    data : pandas.DataFrame or dask.dataframe.DataFrame
+    metadata : pandas.DataFrame or dask.dataframe.DataFrame
+    features : pandas.DataFrame or dask.dataframe.DataFrame
+    spectra : pandas.DataFrame or dask.dataframe.DataFrame
+    peptides : pandas.DataFrame or dask.dataframe.DataFrame
+    targets : numpy.ndarray or dask.array.Array
     columns : list of str
     """
     def __init__(self,
