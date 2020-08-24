@@ -260,10 +260,10 @@ class Model():
             samples = norm_feat[target.astype(bool), :]
             iter_targ = (target[target.astype(bool)]+1)/2
 
-            try:
-                model.fit(samples, iter_targ)
-            except ValueError:
+            if isinstance(model, Incremental):
                 model.fit(samples, iter_targ, classes=[0, 1])
+            else:
+                model.fit(samples, iter_targ)
 
             scores = model.decision_function(norm_feat)
 
@@ -507,11 +507,11 @@ def _get_starting_labels(psms, direction, model, train_fdr):
         The number of passing PSMs with the best feature.
     """
     LOGGER.info("Finding initial direction:")
-    best_feat, feat_pass, feat_labels, _ = psms._find_best_feature(train_fdr)
     if direction is None and not model.is_trained:
+        feat_res = psms._find_best_feature(train_fdr)
+        best_feat, feat_pass, start_labels, _ = feat_res
         LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
                     best_feat, feat_pass, train_fdr)
-        start_labels = feat_labels
     elif model.is_trained:
         scores = model.estimator.decision_function(psms.features)
         start_labels = psms._update_labels(scores, eval_fdr=train_fdr)
@@ -523,10 +523,14 @@ def _get_starting_labels(psms, direction, model, train_fdr):
         asc_labels = psms._update_labels(psms.features[direction].values,
                                          train_fdr, desc=False)
 
-        if (desc_labels == 1).sum() >= (asc_labels == 1).sum():
+        desc_pass = (desc_labels == 1).sum()
+        asc_pass = (asc_labels == 1).sum()
+        if desc_pass >= asc_pass:
             start_labels = desc_labels
+            feat_pass = desc_pass
         else:
             start_labels = asc_labels
+            feat_pass = asc_pass
 
         LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
                     direction, (start_labels == 1).sum(), train_fdr)
