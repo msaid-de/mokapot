@@ -388,7 +388,8 @@ class DaskModel(Model):
         grid = {"estimator__" + k: v for k, v in PERC_GRID.items()}
 
         svm_model = Incremental(lm.SGDClassifier(loss="squared_hinge"))
-        estimator = dms.GridSearchCV(svm_model, param_grid=grid, cv=3)
+        estimator = dms.GridSearchCV(svm_model, param_grid=grid, cv=3,
+                                     n_jobs=1)
         super().__init__(estimator, scaler=dpp.StandardScaler())
 
     def fit(self, psms, **kwargs):

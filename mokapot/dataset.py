@@ -101,6 +101,10 @@ class PsmDataset(ABC):
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
         self._data = self._data.sample(frac=1)
+        try:
+            self._data.repartition(partition_size="100MB")
+        except AttributeError:
+            pass
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
