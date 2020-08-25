@@ -117,7 +117,10 @@ class PsmDataset(ABC):
             self._data = self._data.sort_index()
         except KeyError:
             if DASK_AVAIL:
-                self._data.repartition(partition_size="100MB")
+                logging.info("Repartitioning...")
+                self._data = self._data.repartition(partition_size="100MB")
+                chunks = int(len(new_idx) / self._data.npartitions)
+                logging.info("Setting index...")
                 self._data.set_index(dd.from_array(new_idx))
             else:
                 raise
