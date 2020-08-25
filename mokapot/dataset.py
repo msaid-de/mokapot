@@ -108,25 +108,25 @@ class PsmDataset(ABC):
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
         # Shuffle the PSMs in the dataframe.
-        self._data = self._data.reset_index().set_index("index", drop=True)
         new_idx = np.arange(0, len(self._data))
         np.random.shuffle(new_idx)
 
         try:
             self._data["index"] = new_idx
-            self._data = self._data.set_index("index", drop=True)
-            self._data = self._data.sort_index()
         except TypeError:
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
                 self._data = self._data.repartition(partition_size="100MB")
-                chunks = int(len(new_idx) / self._data.npartitions)
-                self._data["index"] = dd.from_array(new_idx, chunksize=chunks)
+                self._data = self._data.reset_index()
+                self._data = self._data.set_index("index")
+                new_idx = da.from_array(new_idx)
+                self._data["index"] = new_idx
 
-                logging.info("Setting index...")
-                self._data = self._data.set_index("index", drop=True)
+                logging.info("Shuffling PSMs...")
             else:
                 raise
+
+        self._data = self._data.set_index("index", drop=True)
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
