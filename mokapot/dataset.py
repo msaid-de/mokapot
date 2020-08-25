@@ -116,12 +116,16 @@ class PsmDataset(ABC):
         except TypeError:
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
-                self._data = self._data.repartition(partition_size="100MB")
+                self._data = self._data.repartition(partition_size="10MB")
                 self._data = self._data.reset_index()
                 self._data = self._data.set_index("index")
-                new_idx = da.from_array(new_idx)
-                self._data["index"] = new_idx
-
+                new_idx = dd.from_array(new_idx, columns="new_idx")
+                new_idx = new_idx.reset_index().set_index("index")
+                self._data = self._data.merge(new_idx,
+                                              left_index=True,
+                                              right_index=True)
+                print(len(new_idx))
+                self._data = self._data.rename(columns={"new_idx": "index"})
                 logging.info("Shuffling PSMs...")
             else:
                 raise
