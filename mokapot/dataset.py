@@ -113,15 +113,18 @@ class PsmDataset(ABC):
         np.random.shuffle(new_idx)
 
         try:
-            self._data = self._data.set_index(new_idx)
+            self._data["index"] = new_idx
+            self._data = self._data.set_index("index", drop=True)
             self._data = self._data.sort_index()
         except KeyError:
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
                 self._data = self._data.repartition(partition_size="100MB")
                 chunks = int(len(new_idx) / self._data.npartitions)
+                self._data["index"] = dd.from_array(new_idx, chunksize=chunks)
+
                 logging.info("Setting index...")
-                self._data.set_index(dd.from_array(new_idx))
+                self._data = self._data.set_index("index", drop=True)
             else:
                 raise
 
