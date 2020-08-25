@@ -116,7 +116,7 @@ class PsmDataset(ABC):
         except TypeError:
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
-                self._data = self._data.repartition(partition_size="10MB")
+                self._data = self._data.repartition(partition_size="100MB")
                 self._data = self._data.reset_index()
                 self._data = self._data.set_index("index")
                 new_idx = dd.from_array(new_idx, columns="new_idx")
