@@ -23,6 +23,7 @@ from warnings import warn
 from abc import ABC, abstractmethod
 
 import numpy as np
+import pandas as pd
 
 from . import qvalues
 from . import utils
@@ -108,24 +109,21 @@ class PsmDataset(ABC):
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
         # Shuffle the PSMs in the dataframe.
-        new_idx = np.arange(0, len(self._data))
-        np.random.shuffle(new_idx)
+        rand_idx = pd.Series(np.random.permutation(len(self._data.index)))
 
         try:
-            self._data["index"] = new_idx
-        except TypeError:
+            self._data["index"] = rand_idx
+        except (TypeError, ValueError):
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
-                self._data = self._data.repartition(partition_size="100MB")
                 self._data = self._data.reset_index()
+                self._data = self._data.repartition(partition_size="10MB")
                 self._data = self._data.set_index("index")
-                new_idx = dd.from_array(new_idx, columns="new_idx")
-                new_idx = new_idx.reset_index().set_index("index")
-                self._data = self._data.merge(new_idx,
-                                              left_index=True,
-                                              right_index=True)
-                print(len(new_idx))
-                self._data = self._data.rename(columns={"new_idx": "index"})
+                rand_idx = dd.from_pandas(rand_idx,
+                                          npartitions=self._data.npartitions)
+
+                rand_idx.name = "index"
+                self._data = self._data.merge(rand_idx.to_frame())
                 logging.info("Shuffling PSMs...")
             else:
                 raise
