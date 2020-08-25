@@ -117,7 +117,7 @@ class PsmDataset(ABC):
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
                 self._data = self._data.reset_index()
-                self._data = self._data.repartition(partition_size="10MB")
+                self._data = self._data.repartition(partition_size="100MB")
                 self._data = self._data.set_index("index")
                 rand_idx = dd.from_pandas(rand_idx,
                                           npartitions=self._data.npartitions)
