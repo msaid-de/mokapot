@@ -116,7 +116,7 @@ class PsmDataset(ABC):
             self._data["index"] = new_idx
             self._data = self._data.set_index("index", drop=True)
             self._data = self._data.sort_index()
-        except KeyError:
+        except TypeError:
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
                 self._data = self._data.repartition(partition_size="100MB")
