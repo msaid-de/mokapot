@@ -159,7 +159,7 @@ class PsmDataset(ABC):
         for i, feat in enumerate(self._feature_columns):
             LOGGER.info("  (%i)\t%s", i+1, feat)
 
-        LOGGER.info("Found %i PSMs.", len(self._data))
+        LOGGER.info("Found %i PSMs.", len(self._data.index))
 
     @property
     def data(self):
@@ -408,7 +408,7 @@ class LinearPsmDataset(PsmDataset):
         self._num_targets = np.array(self.targets).sum()
         self._num_decoys = np.array(~self.targets).sum()
         LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.",
-                    self._num_targets, self._num_targets)
+                    self._num_targets, self._num_decoys)
 
         if not self._num_targets:
             raise ValueError("No target PSMs were detected.")
