@@ -28,7 +28,15 @@ from . import qvalues
 from . import utils
 from .confidence import LinearConfidence, CrossLinkedConfidence
 
+try:
+    import dask.array as da
+    import dask.dataframe as dd
+    DASK_AVAIL = True
+except ImportError:
+    DASK_AVAIL = False
+
 LOGGER = logging.getLogger(__name__)
+
 
 # Classes ---------------------------------------------------------------------
 class PsmDataset(ABC):
@@ -99,11 +107,19 @@ class PsmDataset(ABC):
             if copy_data:
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
-        self._data = self._data.sample(frac=1)
+        # Shuffle the PSMs in the dataframe.
+        self._data = self._data.reset_index().set_index("index", drop=True)
+        new_idx = np.arange(0, len(self._data))
+        np.random.shuffle(new_idx)
+
         try:
-            self._data.repartition(partition_size="100MB")
-        except AttributeError:
-            pass
+            self._data = self._data.set_index(new_idx)
+            self._data = self._data.sort_index()
+        except KeyError:
+            if DASK_AVAIL:
+                self._data.set_index(dd.from_array(new_idx))
+            else:
+                raise
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)

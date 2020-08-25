@@ -16,6 +16,7 @@ backend, consider using the :py:class:`DaskModel` class.
 """
 import logging
 import pickle
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -87,6 +88,9 @@ class Model():
     def __init__(self, estimator=None, scaler=None):
         """Initialize a Model object"""
         if estimator is None:
+            warnings.warn("The estimator will need to be specified in future "
+                          "versions. Use the PercolatorModel class instead.",
+                          DeprecationWarning)
             svm_model = svm.LinearSVC(dual=False)
             estimator = ms.GridSearchCV(svm_model,
                                         param_grid=PERC_GRID,
@@ -96,13 +100,26 @@ class Model():
         self.estimator = base.clone(estimator)
         self.features = None
         self.is_trained = False
-
         if scaler == "as-is":
             self.scaler = DummyScaler()
         elif scaler is None:
             self.scaler = pp.StandardScaler()
         else:
             self.scaler = base.clone(scaler)
+
+        # Sort out whether we need to optimize hyperparameters and whether
+        # the underyling models are dask.wrappers.Incremental.
+        self._needs_cv = False
+        self._is_incremental = False
+        if hasattr(self.estimator, "estimator"):
+            est = self.estimator.estimator
+            if DASK_AVAIL and isinstance(self.estimator, Incremental):
+                self._is_incremental = True
+            else:
+                self._needs_cv = True
+                if DASK_AVAIL and isinstance(est, Incremental):
+                    self._is_incremental = True
+
 
     def __repr__(self):
         """How to print the class"""
@@ -218,38 +235,10 @@ class Model():
         norm_feat = self.scaler.fit_transform(psms.features.values)
 
         # For dask arrays, we sometimes need to compute chunk sizes.
-        try:
-            norm_feat.compute_chunk_sizes()
-            start_labels = da.from_array(start_labels,
-                                         chunks=norm_feat.chunks[0])
-        except AttributeError:
-            pass
+        norm_feat, start_labels = _compute_chunks(norm_feat, start_labels)
 
-        # Initialize Model and Training Variables
-        if hasattr(self.estimator, "estimator"):
-            LOGGER.info("Selecting hyperparameters...")
-            cv_samples = norm_feat[start_labels.astype(bool), :]
-            cv_targ = (start_labels[start_labels.astype(bool)]+1)/2
-
-            # Need chunk sizes again:
-            try:
-                cv_samples.compute_chunk_sizes()
-                cv_targ.compute_chunk_sizes()
-            except AttributeError:
-                pass
-
-            # Some estimators may use partial_fit() which needs classes:
-            if isinstance(self.estimator.estimator, Incremental):
-                self.estimator.fit(cv_samples, cv_targ, classes=[0, 1])
-            else:
-                self.estimator.fit(cv_samples, cv_targ)
-
-            best_params = self.estimator.best_params_
-            model = self.estimator.estimator
-            model.set_params(**best_params)
-            LOGGER.info("  - best parameters: %s", best_params)
-        else:
-            model = self.estimator
+        # Prepare the model:
+        model = _find_hyperparameters(self, norm_feat, start_labels)
 
         # Begin training loop
         target = start_labels
@@ -259,12 +248,7 @@ class Model():
             # Fit the model
             samples = norm_feat[target.astype(bool), :]
             iter_targ = (target[target.astype(bool)]+1)/2
-
-            if isinstance(model, Incremental):
-                model.fit(samples, iter_targ, classes=[0, 1])
-            else:
-                model.fit(samples, iter_targ)
-
+            model = _fit(self, samples, iter_targ, model)
             scores = model.decision_function(norm_feat)
 
             # Update target
@@ -273,13 +257,11 @@ class Model():
             LOGGER.info("  - Iteration %i: %i training PSMs passed.",
                         i, num_passed[i])
 
-            # target need to be a dask array when samples is a dask array
+            # target need to be a dask array when norm_feat is a dask array
             try:
                 target = da.from_array(target, chunks=norm_feat.chunks[0])
             except AttributeError:
                 pass
-
-            self._update_model(norm_feat, target, model)
 
         # If the model performs worse than what was initialized:
         if (num_passed[-1] < (start_labels == 1).sum()
@@ -298,26 +280,50 @@ class Model():
         LOGGER.info("Done training.")
         return self
 
-    def _update_model(self, features, targets, model):
-        """
-        Utility method to update the model on each iteration.
 
-        This is needed is cases where a parameter depends on the data itself.
-        For example, to make the SGDClassifier behave like LinearSVC, their
-        respective C and alpha parameters much be harmonized so that:
-        alpha = 1 / (C * n_samples). Because n_samples changes with each
-        iteration, it is necessary to update each time.
+class PercolatorModel(Model):
+    """
+    A model that emulates Percolator.
 
-        Parameters
-        ----------
-        features : array-like
-            The features from the dataset.
-        targets : array-like
-            The new labels for the dataset.
-        model : estimator object
-            The model to update.
-        """
-        return
+    Create linear support vector machine (SVM) model that is similar
+    to the one used by Percolator. This is the default model used by
+    mokapot.
+
+    Parameters
+    ----------
+    scaler : scaler object or "as-is", optional
+        Defines how features are normalized before model fitting and
+        prediction. The default, :code:`None`, subtracts the mean and scales
+        to unit variance using
+        :py:class:`sklearn.preprocessing.StandardScaler`.
+        Other scalers should follow the `scikit-learn transformer
+        interface
+        <https://scikit-learn.org/stable/developers/develop.html#apis-of-scikit-learn-objects>`_
+        , implementing :code:`fit_transform()` and :code:`transform()` methods.
+        Alternatively, the string :code:`"as-is"` leaves the features in
+        their original scale.
+
+    Attributes
+    ----------
+    estimator : classifier object
+        The classifier used to re-score PSMs.
+    scaler : scaler object
+        The scaler used to normalize features.
+    features : list of str or None
+        The name of the features used to fit the model. None if the
+        model has yet to be trained.
+    is_trained : bool
+        Indicates if the model has been trained.
+    """
+    def __init__(self, scaler=None):
+        """Initialize a PercolatorModel"""
+        svm_model = svm.LinearSVC(dual=False)
+        estimator = ms.GridSearchCV(svm_model,
+                                    param_grid=PERC_GRID,
+                                    refit=False,
+                                    cv=3)
+
+        super().__init__(estimator, scaler=scaler)
 
 
 class DaskModel(Model):
@@ -329,6 +335,8 @@ class DaskModel(Model):
     when dask has been employed to create the
     :doc:`collection of PSMs <dataset>`.
 
+    Parameters
+    ----------
     scaler : scaler object or "as-is", optional
         Defines how features are normalized before model fitting and
         prediction. The default, :code:`None`, subtracts the mean and scales
@@ -365,7 +373,11 @@ class DaskModel(Model):
         estimator = dms.IncrementalSearchCV(svm_model, parameters=grid,
                                             n_initial_parameters="grid",
                                             decay_rate=None)
-        super().__init__(estimator, scaler=dpp.StandardScaler())
+
+        if scaler is None:
+            scaler = dpp.StandardScaler()
+
+        super().__init__(estimator, scaler=scaler)
 
     def fit(self, psms, **kwargs):
         """
@@ -542,11 +554,75 @@ def _get_starting_labels(psms, direction, model, train_fdr):
     return start_labels, feat_pass
 
 
-def _find_hyperparameters():
+def _find_hyperparameters(model, features, labels):
     """
     Find the hyperparameters for the model.
+
+    Parameters
+    ----------
+    model : a mokapot.Model
+        The model to fit.
+    features : array-like
+        The features to fit the model with.
+    labels : array-like
+        The labels for each PSM (1, 0, or -1).
+
+    Returns
+    -------
+    An estimator.
     """
-    pass
+    if model._needs_cv:
+        LOGGER.info("Selecting hyperparameters...")
+        cv_samples = features[labels.astype(bool), :]
+        cv_targ = (labels[labels.astype(bool)]+1)/2
+
+        # Need chunk sizes again:
+        cv_samples, cv_targ = _compute_chunks(cv_samples, cv_targ)
+
+        # Fit the model
+        _fit(model, cv_samples, cv_targ)
+
+        # Extract the best params.
+        best_params = model.estimator.best_params_
+        new_est = model.estimator.estimator
+        new_est.set_params(**best_params)
+        LOGGER.info("  - best parameters: %s", best_params)
+        model._needs_cv = False
+    else:
+        new_est = model.estimator
+
+    return new_est
+
+
+def _fit(model, features, targets, estimator=None):
+    """
+    Fit the model.
+
+    Parameters
+    ----------
+    model : a mokapot.Model
+        The model to fit.
+    features : array-like
+        The data to use for fitting.
+    targets : array-like
+        The target class (0 or 1).
+    estimator: an estimator or None
+        Uses model.estimator if None.
+
+    Returns
+    -------
+    The fit estimator.
+    """
+    if estimator is None:
+        estimator = model.estimator
+
+    if model._is_incremental:
+        estimator.fit(features, targets, classes=[0, 1])
+    else:
+        estimator.fit(features, targets)
+
+    return estimator
+
 
 def _compute_chunks(base, *args):
     """
@@ -566,20 +642,40 @@ def _compute_chunks(base, *args):
     """
     try:
         base.compute_chunk_sizes()
-        args = [_set_chunks(x, base.chunks[0]) for x in args]
+        args = [x for x in _set_chunks(base.chunks[0], *args)]
     except AttributeError:
         pass
 
-    return [base] + list(args)
+    ret_list = [base] + list(args)
+    if len(ret_list) == 1:
+        return ret_list[0]
 
+    return ret_list
 
 
 def _set_chunks(chunks, *args):
     """
     Set the chunks for an array.
+
+    Parameters
+    ----------
+    chunks : array-like
+        The chunks to split the arrays into.
+    *args : array-like
+        Arrays to split into chunks.
+
+    Yields
+    ------
+    Dask arrays with the appropriate chunks set.
     """
     for array in args:
-        yield 
+        try:
+            array.compute_chunk_sizes()
+            array.rechunk(chunks=chunks)
+        except AttributeError:
+            array = da.from_array(array, chunks=chunks)
+
+        yield array
 
 
 def _get_weights(model, features):

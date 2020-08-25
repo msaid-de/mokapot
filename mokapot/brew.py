@@ -10,6 +10,13 @@ import numpy as np
 
 from .model import Model
 
+try:
+    import dask.dataframe as dd
+    DASK_AVAIL = True
+except ImportError:
+    DASK_AVAIL = False
+
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -185,9 +192,13 @@ def _make_train_sets(psms, test_idx):
         train_set._data = None
         data = []
         for i, j, dset in zip(idx, all_idx, psms):
-            data.append(dset.data.iloc[list(j - set(i)), :])
+            data.append(dset.data.loc[list(j - set(i)), :])
 
-        train_set._data = pd.concat(data, ignore_index=True)
+        try:
+            train_set._data = pd.concat(data, ignore_index=True)
+        except TypeError:
+            train_set._data = dd.concat(data)
+
         yield train_set
 
 
@@ -209,7 +220,7 @@ def _predict(dset, test_idx, models, test_fdr):
     test_set = copy.copy(dset)
     scores = []
     for fold, mod in zip(test_idx, models):
-        test_set._data = dset.data.iloc[list(fold), :]
+        test_set._data = dset.data.loc[list(fold), :]
         s = test_set._calibrate_scores(mod.predict(test_set), test_fdr)
         scores.append(s)
 

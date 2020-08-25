@@ -11,7 +11,13 @@ from mokapot import __version__
 from .config import Config
 from .parsers import read_pin
 from .brew import brew
+from .model import PercolatorModel, DaskModel
 
+try:
+    from dask.distributed import Client
+    DASK_AVAIL = True
+except ImportError:
+    DASK_AVAIL = False
 
 def main():
     """The CLI entry point"""
@@ -39,14 +45,28 @@ def main():
 
     np.random.seed(config.seed)
 
-    if config.aggregate or len(config.pin_files) == 1:
-        datasets = read_pin(config.pin_files)
+    # Make model
+    if config.use_dask:
+        if DASK_AVAIL:
+            client = Client()
+            model = DaskModel()
+        else:
+            raise ImportError("dask and dask-ml must be installed to use the"
+                              "'--use_dask' flag.")
     else:
-        datasets = [read_pin(f) for f in config.pin_files]
+        model = PercolatorModel()
+
+    # Parse PSMs
+    if config.aggregate or len(config.pin_files) == 1:
+        datasets = read_pin(config.pin_files, use_dask=config.use_dask)
+    else:
+        datasets = [read_pin(f, use_dask=config.use_dask)
+                    for f in config.pin_files]
         prefixes = [os.path.splitext(os.path.basename(f))[0]
                     for f in config.pin_files]
 
     psms = brew(datasets,
+                model,
                 train_fdr=config.train_fdr,
                 test_fdr=config.test_fdr,
                 max_iter=config.max_iter,

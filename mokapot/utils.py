@@ -32,7 +32,7 @@ class TqdmToLogger(io.StringIO):
 # Functions -------------------------------------------------------------------
 def pbar(*args, **kwargs):
     """Create a progress bar"""
-    return tqdm.tqdm(*args, **kwargs, ascii=True, file=TqdmToLogger())
+    return tqdm.tqdm(*args, **kwargs)
 
 def flatten(split):
     """Get the indices from split"""
