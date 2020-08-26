@@ -415,8 +415,8 @@ class LinearPsmDataset(PsmDataset):
                          copy_data=copy_data)
 
         self._data[target_column] = self._data[target_column].astype(bool)
-        self._num_targets = np.array(self.targets).sum()
-        self._num_decoys = np.array(~self.targets).sum()
+        self._num_targets = int(np.array(self.targets.sum()))
+        self._num_decoys = int(np.array((~self.targets).sum()))
         LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.",
                     self._num_targets, self._num_decoys)
 
