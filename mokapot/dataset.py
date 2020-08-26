@@ -109,7 +109,8 @@ class PsmDataset(ABC):
                 warn("'copy_data=True' is not available for dask DataFrames.")
 
         # Shuffle the PSMs in the dataframe.
-        rand_idx = pd.Series(np.random.permutation(len(self._data.index)))
+        self._len = None
+        rand_idx = pd.Series(np.random.permutation(len(self)))
 
         try:
             self._data["index"] = rand_idx
@@ -120,10 +121,12 @@ class PsmDataset(ABC):
                 self._data = self._data.repartition(partition_size="100MB")
                 self._data = self._data.set_index("index")
                 rand_idx = dd.from_pandas(rand_idx,
-                                          npartitions=self._data.npartitions)
+                                          npartitions=1)
 
                 rand_idx.name = "index"
-                self._data = self._data.merge(rand_idx.to_frame())
+                self._data = self._data.merge(rand_idx.to_frame(),
+                                              left_index=True,
+                                              right_index=True)
                 logging.info("Shuffling PSMs...")
             else:
                 raise
@@ -159,12 +162,19 @@ class PsmDataset(ABC):
         for i, feat in enumerate(self._feature_columns):
             LOGGER.info("  (%i)\t%s", i+1, feat)
 
-        LOGGER.info("Found %i PSMs.", len(self._data.index))
+        LOGGER.info("Found %i PSMs.", len(self))
 
     @property
     def data(self):
         """The full collection of PSMs."""
         return self._data
+
+    def __len__(self):
+        """Return the number of PSMs"""
+        if self._len is None:
+            self._len = len(self._data.index)
+
+        return self._len
 
     @property
     def _metadata_columns(self):
