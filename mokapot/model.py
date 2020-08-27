@@ -215,16 +215,16 @@ class Model():
         -------
         self
         """
-        if not psms.targets.sum():
+        if not psms._num_targets:
             raise ValueError("No target PSMs were available for training.")
 
-        if not (~psms.targets).sum():
+        if not psms._num_decoys:
             raise ValueError("No decoy PSMs were available for training.")
 
-        if len(psms.data) <= 200:
+        if len(psms) <= 200:
             logging.warning("Few PSMs are available for model training (%i). "
                             "The learned models may be unstable.",
-                            len(psms.data))
+                            len(psms))
 
         # Get the starting labels
         start_labels, feat_pass = _get_starting_labels(psms, direction, self,
@@ -402,7 +402,7 @@ class DaskModel(Model):
         -------
         self
         """
-        num = len(psms.features)
+        num = len(psms)
         params = self.estimator.get_params()["parameters"]
         weights = params["estimator__class_weight"]
         new_weights = [{k: v/num for k, v in x.items()} for x in weights]

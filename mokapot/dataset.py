@@ -118,7 +118,8 @@ class PsmDataset(ABC):
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
                 self._data = self._data.reset_index()
-                self._data = self._data.repartition(partition_size="100MB")
+                #self._data = self._data.repartition()
+                logging.info("partitions: %s", str(self._data.npartitions))
                 self._data = self._data.set_index("index")
                 rand_idx = dd.from_pandas(rand_idx,
                                           npartitions=1)
@@ -444,7 +445,7 @@ class LinearPsmDataset(PsmDataset):
     @property
     def targets(self):
         """An array indicating whether each PSM is a target sequence."""
-        return self.data[self._target_column].values
+        return self.data.loc[:, self._target_column].values
 
     @property
     def peptides(self):
