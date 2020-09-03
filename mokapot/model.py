@@ -72,6 +72,20 @@ class Model():
         , implementing :code:`fit_transform()` and :code:`transform()` methods.
         Alternatively, the string :code:`"as-is"` leaves the features in
         their original scale.
+    train_fdr : float, optional
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int, optional
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs. The default, :code:`None`, automatically
+        selects the feature that finds the most PSMs below the
+        `train_fdr`. This
+        will be ignored in the case the model is already trained.
+    override : bool, optional
+        If the learned model performs worse than the best feature, should
+        the model still be used?
 
     Attributes
     ----------
@@ -84,8 +98,25 @@ class Model():
         model has yet to be trained.
     is_trained : bool
         Indicates if the model has been trained.
+    train_fdr : float
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs.
+    override : bool
+        If the learned model performs worse than the best feature, should
+        the model still be used?
     """
-    def __init__(self, estimator=None, scaler=None):
+    def __init__(self,
+                 estimator=None,
+                 scaler=None,
+                 train_fdr=0.01,
+                 max_iter=10,
+                 direction=None,
+                 override=False):
         """Initialize a Model object"""
         if estimator is None:
             warnings.warn("The estimator will need to be specified in future "
@@ -107,6 +138,11 @@ class Model():
         else:
             self.scaler = base.clone(scaler)
 
+        self.train_fdr = train_fdr
+        self.max_iter = max_iter
+        self.direction = direction
+        self.override = override
+
         # Sort out whether we need to optimize hyperparameters and whether
         # the underyling models are dask.wrappers.Incremental.
         self._needs_cv = False
@@ -119,7 +155,6 @@ class Model():
                 self._needs_cv = True
                 if DASK_AVAIL and isinstance(est, Incremental):
                     self._is_incremental = True
-
 
     def __repr__(self):
         """How to print the class"""
@@ -183,7 +218,7 @@ class Model():
         """Alias for :py:meth:`decision_function`."""
         return self.decision_function(psms)
 
-    def fit(self, psms, train_fdr=0.01, max_iter=10, direction=None):
+    def fit(self, psms):
         """
         Fit the machine learning model using the Percolator algorithm.
 
@@ -199,17 +234,6 @@ class Model():
         psms : PsmDataset object
             :doc:`A collection of PSMs <dataset>` from which to train
             the model.
-        train_fdr : float, optional
-            The maximum false discovery rate at which to consider a
-            target PSM as a positive example.
-        max_iter : int, optional
-            The number of iterations to perform.
-        direction : str or None, optional
-            The name of the feature to use as the initial direction for
-            ranking PSMs. The default, :code:`None`, automatically
-            selects the feature that finds the most PSMs below the
-            `train_fdr`. This
-            will be ignored in the case the model is already trained.
 
         Returns
         -------
@@ -227,8 +251,7 @@ class Model():
                             len(psms))
 
         # Get the starting labels
-        start_labels, feat_pass = _get_starting_labels(psms, direction, self,
-                                                       train_fdr)
+        start_labels, feat_pass = _get_starting_labels(psms, self)
 
         # Normalize Features
         self.features = psms.features.columns.tolist()
@@ -244,7 +267,7 @@ class Model():
         target = start_labels
         num_passed = []
         LOGGER.info("Beginning training loop...")
-        for i in range(max_iter):
+        for i in range(self.max_iter):
             # Fit the model
             samples = norm_feat[target.astype(bool), :]
             iter_targ = (target[target.astype(bool)]+1)/2
@@ -252,9 +275,9 @@ class Model():
             scores = model.decision_function(norm_feat)
 
             # Update target
-            target = psms._update_labels(scores, eval_fdr=train_fdr)
+            target = psms._update_labels(scores, eval_fdr=self.train_fdr)
             num_passed.append((target == 1).sum())
-            LOGGER.info("  - Iteration %i: %i training PSMs passed.",
+            LOGGER.info("\t- Iteration %i: %i training PSMs passed.",
                         i, num_passed[i])
 
             # target need to be a dask array when norm_feat is a dask array
@@ -266,7 +289,10 @@ class Model():
         # If the model performs worse than what was initialized:
         if (num_passed[-1] < (start_labels == 1).sum()
                 or num_passed[-1] < feat_pass):
-            raise RuntimeError("Model performs worse after training.")
+            if self.override:
+                LOGGER.warning("Model performs worse after training.")
+            else:
+                raise RuntimeError("Model performs worse after training.")
 
         self.estimator = model
 
@@ -302,6 +328,20 @@ class PercolatorModel(Model):
         , implementing :code:`fit_transform()` and :code:`transform()` methods.
         Alternatively, the string :code:`"as-is"` leaves the features in
         their original scale.
+    train_fdr : float, optional
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int, optional
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs. The default, :code:`None`, automatically
+        selects the feature that finds the most PSMs below the
+        `train_fdr`. This
+        will be ignored in the case the model is already trained.
+    override : bool, optional
+        If the learned model performs worse than the best feature, should
+        the model still be used?
 
     Attributes
     ----------
@@ -314,8 +354,24 @@ class PercolatorModel(Model):
         model has yet to be trained.
     is_trained : bool
         Indicates if the model has been trained.
+    train_fdr : float
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs.
+    override : bool
+        If the learned model performs worse than the best feature, should
+        the model still be used?
     """
-    def __init__(self, scaler=None):
+    def __init__(self,
+                 scaler=None,
+                 train_fdr=0.01,
+                 max_iter=10,
+                 direction=None,
+                 override=False):
         """Initialize a PercolatorModel"""
         svm_model = svm.LinearSVC(dual=False)
         estimator = ms.GridSearchCV(svm_model,
@@ -323,7 +379,9 @@ class PercolatorModel(Model):
                                     refit=False,
                                     cv=3)
 
-        super().__init__(estimator, scaler=scaler)
+        super().__init__(estimator=estimator, scaler=scaler,
+                         train_fdr=train_fdr, max_iter=max_iter,
+                         direction=direction, override=override)
 
 
 class DaskModel(Model):
@@ -348,6 +406,20 @@ class DaskModel(Model):
         , implementing :code:`fit_transform()` and :code:`transform()` methods.
         Alternatively, the string :code:`"as-is"` leaves the features in
         their original scale.
+    train_fdr : float, optional
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int, optional
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs. The default, :code:`None`, automatically
+        selects the feature that finds the most PSMs below the
+        `train_fdr`. This
+        will be ignored in the case the model is already trained.
+    override : bool, optional
+        If the learned model performs worse than the best feature, should
+        the model still be used?
 
     Attributes
     ----------
@@ -360,8 +432,24 @@ class DaskModel(Model):
         model has yet to be trained.
     is_trained : bool
         Indicates if the model has been trained.
+    train_fdr : float
+        The maximum false discovery rate at which to consider a target PSM as a
+        positive example.
+    max_iter : int
+        The number of iterations to perform.
+    direction : str or None, optional
+        The name of the feature to use as the initial direction for ranking
+        PSMs.
+    override : bool
+        If the learned model performs worse than the best feature, should
+        the model still be used?
     """
-    def __init__(self, scaler=None):
+    def __init__(self,
+                 scaler=None,
+                 train_fdr=0.01,
+                 max_iter=10,
+                 direction=None,
+                 override=False):
         """Initialize a DaskModel"""
         if not DASK_AVAIL:
             raise RuntimeError("dask and dask-ml are needed to use "
@@ -377,9 +465,11 @@ class DaskModel(Model):
         if scaler is None:
             scaler = dpp.StandardScaler()
 
-        super().__init__(estimator, scaler=scaler)
+        super().__init__(estimator=estimator, scaler=scaler,
+                         train_fdr=train_fdr, max_iter=max_iter,
+                         direction=direction, override=override)
 
-    def fit(self, psms, **kwargs):
+    def fit(self, psms):
         """
         Fit the machine learning model using the Percolator algorithm.
 
@@ -395,8 +485,6 @@ class DaskModel(Model):
         psms : PsmDataset object
             :doc:`A collection of PSMs <dataset>` from which to train
             the model.
-        **kwargs : dict
-            Keyword arguements for fitting (see :py:fun:`Model.fit()`).
 
         Returns
         -------
@@ -410,7 +498,7 @@ class DaskModel(Model):
                       "parameters": {"estimator__class_weight": new_weights}}
 
         self.estimator.set_params(**new_params)
-        return super().fit(psms, **kwargs)
+        return super().fit(psms)
 
 
 class DummyScaler():
@@ -496,7 +584,7 @@ def load_model(model_file):
 
 
 # Private Functions -----------------------------------------------------------
-def _get_starting_labels(psms, direction, model, train_fdr):
+def _get_starting_labels(psms, model):
     """
     Get labels using the initial direction.
 
@@ -504,12 +592,8 @@ def _get_starting_labels(psms, direction, model, train_fdr):
     ----------
     psms : a collection of PSMs
         The PsmDataset object
-    direction : str or None
-        A default direction, if provided.
     model : mokapot.Model
         A model object (this is likely `self`)
-    train_fdr : float
-        The FDR to evaluate at.
 
     Returns
     -------
@@ -518,22 +602,21 @@ def _get_starting_labels(psms, direction, model, train_fdr):
     feat_pass : int
         The number of passing PSMs with the best feature.
     """
-    LOGGER.info("Finding initial direction:")
-    if direction is None and not model.is_trained:
-        feat_res = psms._find_best_feature(train_fdr)
+    LOGGER.info("Finding initial direction...")
+    if model.direction is None and not model.is_trained:
+        feat_res = psms._find_best_feature(model.train_fdr)
         best_feat, feat_pass, start_labels, _ = feat_res
-        LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
-                    best_feat, feat_pass, train_fdr)
+        LOGGER.info("\t- Selected feature %s with %i PSMs at q<=%g.",
+                    best_feat, feat_pass, model.train_fdr)
     elif model.is_trained:
         scores = model.estimator.decision_function(psms.features)
-        start_labels = psms._update_labels(scores, eval_fdr=train_fdr)
-        LOGGER.info("  - The pretrained model found %i PSMs at q<=%g.",
-                    (start_labels == 1).sum(), train_fdr)
+        start_labels = psms._update_labels(scores, eval_fdr=model.train_fdr)
+        LOGGER.info("\t- The pretrained model found %i PSMs at q<=%g.",
+                    (start_labels == 1).sum(), model.train_fdr)
     else:
-        desc_labels = psms._update_labels(psms.features[direction].values,
-                                          train_fdr, desc=True)
-        asc_labels = psms._update_labels(psms.features[direction].values,
-                                         train_fdr, desc=False)
+        feat = np.array(psms.features[model.direction].values)
+        desc_labels = psms._update_labels(feat, model.train_fdr, desc=True)
+        asc_labels = psms._update_labels(feat, model.train_fdr, desc=False)
 
         desc_pass = (desc_labels == 1).sum()
         asc_pass = (asc_labels == 1).sum()
@@ -545,10 +628,11 @@ def _get_starting_labels(psms, direction, model, train_fdr):
             feat_pass = asc_pass
 
         LOGGER.info("  - Selected feature %s with %i PSMs at q<=%g.",
-                    direction, (start_labels == 1).sum(), train_fdr)
+                    model.direction, (start_labels == 1).sum(),
+                    model.train_fdr)
 
     if not (start_labels == 1).sum():
-        raise RuntimeError(f"No PSMs accepted at train_fdr={train_fdr}. "
+        raise RuntimeError(f"No PSMs accepted at train_fdr={model.train_fdr}. "
                            "Consider changing it to a higher value.")
 
     return start_labels, feat_pass
@@ -586,7 +670,6 @@ def _find_hyperparameters(model, features, labels):
         best_params = model.estimator.best_params_
         new_est = model.estimator.estimator
         new_est.set_params(**best_params)
-        LOGGER.info("  - best parameters: %s", best_params)
         model._needs_cv = False
     else:
         new_est = model.estimator

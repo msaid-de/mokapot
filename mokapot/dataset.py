@@ -117,22 +117,25 @@ class PsmDataset(ABC):
         except (TypeError, ValueError):
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
-                self._data = self._data.reset_index()
-                #self._data = self._data.repartition()
-                logging.info("partitions: %s", str(self._data.npartitions))
+                self._data["index"] = 1
+                self._data["index"] = self._data["index"].cumsum() - 1
                 self._data = self._data.set_index("index")
-                rand_idx = dd.from_pandas(rand_idx,
-                                          npartitions=1)
+                logging.info("\t- partitions: %s", str(self._data.npartitions))
 
+                rand_idx = dd.from_pandas(rand_idx, npartitions=1)
                 rand_idx.name = "index"
-                self._data = self._data.merge(rand_idx.to_frame(),
-                                              left_index=True,
-                                              right_index=True)
-                logging.info("Shuffling PSMs...")
+                self._data = self._data.merge(rand_idx.to_frame())
             else:
                 raise
 
+        logging.info("Shuffling PSMs...")
         self._data = self._data.set_index("index", drop=True)
+
+        # If using Pandas, sort by the new index:
+        try:
+            self._data = self._data.sort_index()
+        except AttributeError:
+            pass
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
@@ -230,13 +233,17 @@ class PsmDataset(ABC):
         best_feat = None
         best_positives = 0
         new_labels = None
+        targets = np.array(self.targets)
+
         LOGGER.info("Finding the best feature...")
         for desc in (True, False):
             msg = {True: "descending", False: "ascending"}
-            LOGGER.info("- Testing features in %s order...", msg[desc])
-            for feat in utils.pbar(self.features.columns):
-                labs = self._update_labels(self.features.loc[:, feat],
-                                           eval_fdr=eval_fdr, desc=desc)
+            LOGGER.info("\t- Testing features in %s order...", msg[desc])
+            for idx, feat in enumerate(utils.pbar(self.features.columns)):
+                labs = self._update_labels(self.features.loc[:, feat].values,
+                                           eval_fdr=eval_fdr, desc=desc,
+                                           targets=targets)
+
                 num_passing = np.array(labs == 1).sum()
 
                 if num_passing > best_positives:
@@ -300,16 +307,17 @@ class PsmDataset(ABC):
             split.
         """
         cols = list(self._spectrum_columns)
-        grouped = self.data.groupby(cols, sort=False)
+        spec_id = self.data.loc[:, cols]
 
         try:
-            scans = list(grouped.indices.values())
+            spec_id = spec_id.compute()
         except AttributeError:
-            scans = grouped.apply(lambda x: x.index, meta=("x", "int64"))
-            scans = list(scans.compute())
+            pass
+
+        scans = list(spec_id.groupby(cols, sort=False)
+                            .apply(lambda x: x.index.values))
 
         np.random.shuffle(scans)
-        scans = list(scans)
 
         # Split the data evenly
         num = len(scans) // folds
@@ -417,7 +425,7 @@ class LinearPsmDataset(PsmDataset):
 
         self._data[target_column] = self._data[target_column].astype(bool)
         self._num_targets = int(np.array(self.targets.sum()))
-        self._num_decoys = int(np.array((~self.targets).sum()))
+        self._num_decoys = len(self) - self._num_targets
         LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.",
                     self._num_targets, self._num_decoys)
 
@@ -433,7 +441,7 @@ class LinearPsmDataset(PsmDataset):
         """How to print the class"""
         features = "\n\t\t".join(self._feature_columns)
         metadata = "\n\t\t".join(self._metadata_columns)
-        return (f"A mokapot.dataset.LinearPsmDataset with {len(self.data)} "
+        return (f"A mokapot.dataset.LinearPsmDataset with {len(self)} "
                 "PSMs:\n"
                 f"\t- target PSMs: {self._num_targets}\n"
                 f"\t- decoy PSMs: {self._num_decoys}\n"
@@ -452,7 +460,7 @@ class LinearPsmDataset(PsmDataset):
         """A :py:class:`pandas.DataFrame` of the peptide column."""
         return self.data.loc[:, self._peptide_column]
 
-    def _update_labels(self, scores, eval_fdr=0.01, desc=True):
+    def _update_labels(self, scores, eval_fdr=0.01, desc=True, targets=None):
         """
         Return the label for each PSM, given it's score.
 
@@ -468,6 +476,8 @@ class LinearPsmDataset(PsmDataset):
             The false discovery rate threshold to use.
         desc : bool
             Are higher scores better?
+        targets : np.ndarray
+            The target vector. If not specified, just use self.targets.
 
         Returns
         -------
@@ -477,7 +487,9 @@ class LinearPsmDataset(PsmDataset):
             training. Typically, 0 is reserved for targets, below a
             specified FDR threshold.
         """
-        targets = np.array(self.targets)
+        if targets is None:
+            targets = np.array(self.targets)
+
         qvals = qvalues.tdc(scores, target=targets, desc=desc)
         unlabeled = np.logical_and(qvals > eval_fdr, targets)
         new_labels = np.ones(len(qvals))

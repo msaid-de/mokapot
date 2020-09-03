@@ -30,6 +30,7 @@ def main():
                       2: logging.INFO,
                       3: logging.DEBUG}
 
+    logging.getLogger("dask_ml").propagate = False
     logging.basicConfig(format=("[{levelname}] {message}"),
                         style="{", level=verbosity_dict[config.verbosity])
 
@@ -48,13 +49,20 @@ def main():
     # Make model
     if config.use_dask:
         if DASK_AVAIL:
-            client = Client()
-            model = DaskModel()
+            client = Client(processes=False)
+            #ncores = len(client.ncores().values())
+            nthreads = sum(client.nthreads().values())
+            logging.info("Using Dask backend with %i threads...", nthreads)
+            model = DaskModel(train_fdr=config.train_fdr,
+                              max_iter=config.max_iter,
+                              direction=config.direction,)
         else:
             raise ImportError("dask and dask-ml must be installed to use the"
                               "'--use_dask' flag.")
     else:
-        model = PercolatorModel()
+        model = PercolatorModel(train_fdr=config.train_fdr,
+                                max_iter=config.max_iter,
+                                direction=config.direction,)
 
     # Parse PSMs
     if config.aggregate or len(config.pin_files) == 1:
@@ -67,10 +75,7 @@ def main():
 
     psms = brew(datasets,
                 model,
-                train_fdr=config.train_fdr,
                 test_fdr=config.test_fdr,
-                max_iter=config.max_iter,
-                direction=config.direction,
                 folds=config.folds)
 
     if config.aggregate or len(config.pin_files) == 1:
