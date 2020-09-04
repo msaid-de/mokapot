@@ -255,11 +255,17 @@ class LinearConfidence(Confidence):
 
             # Calculate PEPs
             LOGGER.info("Assiging PEPs to %s.", level)
-            _, pep = qvality.getQvaluesFromScores(scores[targets],
-                                                  scores[~targets])
+            targ_scores = np.array(scores[targets])
+            targ_idx = np.argsort(-targ_scores)
+
+            dec_scores = np.array(scores[~targets])
+            dec_idx = np.argsort(-dec_scores)
+
+            _, pep = qvality.getQvaluesFromScores(targ_scores[targ_idx],
+                                                  dec_scores[dec_idx])
 
             # Assign PEPs to dataframe
-            data = _assign(data, "mokapot PEP", pep)
+            data = _assign(data, "mokapot PEP", pep[np.argsort(targ_idx)])
 
             # Sort values
             try:
