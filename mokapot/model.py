@@ -29,6 +29,7 @@ from sklearn.exceptions import NotFittedError
 
 try:
     import dask.array as da
+    import dask_ml.linear_model as dlm
     import dask_ml.model_selection as dms
     import dask_ml.preprocessing as dpp
     from dask_ml.wrappers import Incremental
@@ -212,7 +213,7 @@ class Model():
                              "features of this Model.")
 
         feat = self.scaler.transform(psms.features.loc[:, self.features].values)
-        return self.estimator.decision_function(feat)
+        return self.estimator.decision_function(_compute_chunks(feat))
 
     def predict(self, psms):
         """Alias for :py:meth:`decision_function`."""
@@ -271,6 +272,8 @@ class Model():
             # Fit the model
             samples = norm_feat[target.astype(bool), :]
             iter_targ = (target[target.astype(bool)]+1)/2
+            samples, iter_targ = _compute_chunks(samples, iter_targ)
+
             model = _fit(self, samples, iter_targ, model)
             scores = model.decision_function(norm_feat)
 
@@ -388,9 +391,8 @@ class DaskModel(Model):
     """
     A model for when dask is used as a backend.
 
-    Create an estimation of Percolator's linear support vector machine
-    models using stochastic gradient descent. This model is suitable
-    when dask has been employed to create the
+    Create a Logistic Regression model that supports dask objects. This
+    model is suitable when dask has been employed to create the
     :doc:`collection of PSMs <dataset>`.
 
     Parameters
@@ -455,12 +457,11 @@ class DaskModel(Model):
             raise RuntimeError("dask and dask-ml are needed to use "
                                "a DaskModel")
 
-        grid = {"estimator__" + k: v for k, v in PERC_GRID.items()}
+        grid = {"C": [0.01, 0.1, 1, 10, 100]}
 
-        svm_model = Incremental(lm.SGDClassifier(loss="squared_hinge"))
-        estimator = dms.IncrementalSearchCV(svm_model, parameters=grid,
-                                            n_initial_parameters="grid",
-                                            decay_rate=None)
+        lr_model = dlm.LogisticRegression(solver_kwargs={"normalize": False},
+                                          warm_start=True)
+        estimator = dms.GridSearchCV(lr_model, param_grid=grid)
 
         if scaler is None:
             scaler = dpp.StandardScaler()
@@ -468,37 +469,6 @@ class DaskModel(Model):
         super().__init__(estimator=estimator, scaler=scaler,
                          train_fdr=train_fdr, max_iter=max_iter,
                          direction=direction, override=override)
-
-    def fit(self, psms):
-        """
-        Fit the machine learning model using the Percolator algorithm.
-
-        The model if trained by iteratively learning to separate decoy
-        PSMs from high-scoring target PSMs. By default, an initial
-        direction is chosen as the feature that best separates target
-        from decoy PSMs. A false discovery rate threshold is used to
-        define how high a target must score to be used as a positive
-        example in the next training iteration.
-
-        Parameters
-        ----------
-        psms : PsmDataset object
-            :doc:`A collection of PSMs <dataset>` from which to train
-            the model.
-
-        Returns
-        -------
-        self
-        """
-        num = len(psms)
-        params = self.estimator.get_params()["parameters"]
-        weights = params["estimator__class_weight"]
-        new_weights = [{k: v/num for k, v in x.items()} for x in weights]
-        new_params = {"estimator__estimator__alpha":  1/num,
-                      "parameters": {"estimator__class_weight": new_weights}}
-
-        self.estimator.set_params(**new_params)
-        return super().fit(psms)
 
 
 class DummyScaler():

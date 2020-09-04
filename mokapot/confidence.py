@@ -191,18 +191,7 @@ class LinearConfidence(Confidence):
         self._peptide_column = psms._peptide_column
         self._eval_fdr = eval_fdr
 
-        # Go ahead and shuffle so ties are broken randomly:
-        self._data = self._data.sample(frac=1)
-
         # Set an index:
-        self._data = self._data.set_index(-1 * self._data[self._score_column])
-
-        score_index = np.arange(len(self._data))
-        score_index_name = _new_column("score_index", self._data)
-        self._data = _assign(self._data, score_index_name, score_index)
-        self._data = self._data.set_index(score_index_name)
-
-
         LOGGER.info("Performing target-decoy competition...")
         LOGGER.info("Keeping the best match per %s columns...",
                     "+".join(self._psm_columns))
@@ -237,7 +226,7 @@ class LinearConfidence(Confidence):
                                    self._score_column)
 
         peptides = self._data.loc[peptide_idx, :]
-        LOGGER.info("  - Found %i unique peptides.", len(peptides))
+        LOGGER.info("\t- Found %i unique peptides.", len(peptides))
 
         for level, data in zip(("PSMs", "peptides"), (self._data, peptides)):
             scores = data.loc[:, self._score_column].values
