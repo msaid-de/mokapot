@@ -50,7 +50,6 @@ def main():
     if config.use_dask:
         if DASK_AVAIL:
             client = Client(processes=False)
-            #ncores = len(client.ncores().values())
             nthreads = sum(client.nthreads().values())
             logging.info("Using Dask backend with %i threads...", nthreads)
             model = DaskModel(train_fdr=config.train_fdr,

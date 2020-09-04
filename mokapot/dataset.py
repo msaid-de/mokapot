@@ -117,7 +117,7 @@ class PsmDataset(ABC):
             rand_idx = pd.Series(np.arange(len(self)))
 
         try:
-            self._data["index"] = rand_idx
+            self._data["index"] = rand_idx.values
         except (TypeError, ValueError):
             if DASK_AVAIL:
                 logging.info("Repartitioning...")
@@ -243,7 +243,7 @@ class PsmDataset(ABC):
         for desc in (True, False):
             msg = {True: "descending", False: "ascending"}
             LOGGER.info("\t- Testing features in %s order...", msg[desc])
-            for idx, feat in enumerate(utils.pbar(self.features.columns)):
+            for feat in utils.pbar(self.features.columns):
                 labs = self._update_labels(self.features.loc[:, feat].values,
                                            eval_fdr=eval_fdr, desc=desc,
                                            targets=targets)
