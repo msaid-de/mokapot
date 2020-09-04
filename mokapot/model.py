@@ -213,7 +213,8 @@ class Model():
                              "features of this Model.")
 
         feat = self.scaler.transform(psms.features.loc[:, self.features].values)
-        return self.estimator.decision_function(_compute_chunks(feat))
+        pred = self.estimator.decision_function(_compute_chunks(feat))
+        return np.array(pred)
 
     def predict(self, psms):
         """Alias for :py:meth:`decision_function`."""
@@ -221,7 +222,7 @@ class Model():
 
     def fit(self, psms):
         """
-        Fit the machine learning model using the Percolator algorithm.
+        Fit the model using the Percolator algorithm.
 
         The model if trained by iteratively learning to separate decoy
         PSMs from high-scoring target PSMs. By default, an initial
@@ -458,7 +459,6 @@ class DaskModel(Model):
                                "a DaskModel")
 
         grid = {"C": [0.01, 0.1, 1, 10, 100]}
-
         lr_model = dlm.LogisticRegression(solver_kwargs={"normalize": False},
                                           warm_start=True)
         estimator = dms.GridSearchCV(lr_model, param_grid=grid)

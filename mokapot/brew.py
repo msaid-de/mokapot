@@ -88,12 +88,7 @@ def brew(psms,
 
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_idx = [p._split(folds) for p in psms]
-    print(test_idx[0][0][:5])
-    print(psms[0].data.head())
-
-    print("Got indices")
     train_sets = _make_train_sets(psms, test_idx)
-    print("Made training sets")
 
     # Create args for map:
     map_args = [_fit_model,
@@ -129,17 +124,15 @@ def brew(psms,
     # Find which is best: the learned model, the best feature, or
     # a pretrained model.
     if not model.override:
-        logging.info("")
-        logging.info("Finding best overall feature...")
+        LOGGER.info("")
+        LOGGER.info("Finding best overall feature...")
         best_feats = [p._find_best_feature(test_fdr) for p in psms]
         feat_total = sum([best_feat[1] for best_feat in best_feats])
     else:
         feat_total = 0
-    print(f"best feature: {feat_total}")
 
     preds = [p._update_labels(s, test_fdr) for p, s in zip(psms, scores)]
     pred_total = sum([(pred == 1).sum() for pred in preds])
-    print(f"model: {pred_total}")
 
     # Here, f[0] is the name of the best feature, and f[3] is a boolean
     if feat_total > pred_total:
