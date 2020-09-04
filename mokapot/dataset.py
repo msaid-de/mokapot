@@ -41,6 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 # Classes ---------------------------------------------------------------------
 class PsmDataset(ABC):
+    _shuffle = True # For testing
     """
     Store a collection of PSMs and their features.
 
@@ -110,7 +111,10 @@ class PsmDataset(ABC):
 
         # Shuffle the PSMs in the dataframe.
         self._len = None
-        rand_idx = pd.Series(np.random.permutation(len(self)))
+        if type(self)._shuffle:
+            rand_idx = pd.Series(np.random.permutation(len(self)))
+        else:
+            rand_idx = pd.Series(np.arange(len(self)))
 
         try:
             self._data["index"] = rand_idx
@@ -489,6 +493,8 @@ class LinearPsmDataset(PsmDataset):
         """
         if targets is None:
             targets = np.array(self.targets)
+
+        print(targets)
 
         qvals = qvalues.tdc(scores, target=targets, desc=desc)
         unlabeled = np.logical_and(qvals > eval_fdr, targets)

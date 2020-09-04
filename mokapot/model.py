@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 import sklearn.base as base
 import sklearn.svm as svm
-import sklearn.linear_model as lm
 import sklearn.model_selection as ms
 import sklearn.preprocessing as pp
 from sklearn.exceptions import NotFittedError

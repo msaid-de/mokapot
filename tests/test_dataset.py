@@ -7,6 +7,10 @@ import mokapot
 import numpy as np
 import pandas as pd
 
+# Don't shuffle for consistency
+mokapot.dataset.PsmDataset._shuffle = False
+
+np.random.seed(42)
 EX_FILE = os.path.join("data", "scope2_FP97AA.pin")
 DAT1 = pd.DataFrame({"target": [True, True, True, False, False, False],
                      "spectrum": [1, 2, 3, 4, 5, 1],
@@ -15,8 +19,11 @@ DAT1 = pd.DataFrame({"target": [True, True, True, False, False, False],
                      "feature_1": [4, 3, 2, 2, 1, 0],
                      "feature_2": [2, 3, 4, 1, 2, 3]})
 
+DAT1.index.name = "index"
+
 def test_linear_init():
     """Test that a LinearPsmDataset is initialized correctly"""
+    np.random.seed(42)
     dat = DAT1.copy()
     dset = mokapot.LinearPsmDataset(dat,
                                     target_column="target",
@@ -53,6 +60,7 @@ def test_assign_confidence():
 
 def test_update_labels():
     """Test that the _update_labels() methods are working"""
+    np.random.seed(42)
     dset = mokapot.LinearPsmDataset(DAT1,
                                     target_column="target",
                                     spectrum_columns="spectrum",
