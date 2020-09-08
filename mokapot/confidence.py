@@ -28,7 +28,7 @@ from . import qvalues
 try:
     import dask.array as da
 except ImportError:
-    dd = None
+    da = None
 
 
 LOGGER = logging.getLogger(__name__)
@@ -103,7 +103,13 @@ class Confidence():
         out_files = []
         for level, qvals in self._confidence_estimates.items():
             out_file = file_base + f".{level}.txt"
-            qvals.to_csv(out_file, sep=sep, index=False)
+            try:
+                # Dask
+                qvals.to_csv(out_file, single_file=True, sep=sep, index=False)
+            except TypeError:
+                # Pandas
+                qvals.to_csv(out_file, sep=sep, index=False)
+
             out_files.append(out_file)
 
         return out_files
@@ -419,9 +425,9 @@ def _groupby_max(df, by_cols, max_col):
     try:
         #raise AttributeError
         # This is much faster for smallish pandas dataframes:
-        idx = df.sort_values(list(by_cols)+[max_col], axis=0) \
-                .drop_duplicates(list(by_cols), keep="last") \
-                .index
+        idx = (df.sort_values(list(by_cols)+[max_col], axis=0)
+                 .drop_duplicates(list(by_cols), keep="last")
+                 .index)
     except AttributeError:
         # Dask does not have 'sort_values':
         idx = (df.loc[:, list(by_cols)+[max_col]]
