@@ -103,7 +103,6 @@ def brew(psms,
         else:
             map_fun = prc.map
 
-        print("Started mapping")
         models = list(map_fun(*map_args))
 
     # Determine if the models need to be reset:

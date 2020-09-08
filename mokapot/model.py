@@ -14,6 +14,7 @@ typical use cases. For example, use :py:class:`PercolatorModel` if you
 want to emulate the behavior of Percolator. If you are using the dask
 backend, consider using the :py:class:`DaskModel` class.
 """
+import copy
 import logging
 import pickle
 import warnings
@@ -22,6 +23,7 @@ import numpy as np
 import pandas as pd
 import sklearn.base as base
 import sklearn.svm as svm
+import sklearn.linear_model as lm
 import sklearn.model_selection as ms
 import sklearn.preprocessing as pp
 from sklearn.exceptions import NotFittedError
@@ -457,10 +459,10 @@ class DaskModel(Model):
             raise RuntimeError("dask and dask-ml are needed to use "
                                "a DaskModel")
 
-        grid = {"C": [0.01, 0.1, 1, 10, 100]}
-        lr_model = dlm.LogisticRegression(solver_kwargs={"normalize": False},
-                                          warm_start=True)
-        estimator = dms.GridSearchCV(lr_model, param_grid=grid)
+        grid = {"estimator__" + k: v for k, v in PERC_GRID.items()}
+        estimator = ms.GridSearchCV(_IncrementalSVC(),
+                                    param_grid=grid,
+                                    cv=3)
 
         if scaler is None:
             scaler = dpp.StandardScaler()
@@ -468,6 +470,39 @@ class DaskModel(Model):
         super().__init__(estimator=estimator, scaler=scaler,
                          train_fdr=train_fdr, max_iter=max_iter,
                          direction=direction, override=override)
+
+
+class _IncrementalSVC(Incremental):
+    """A mimic of the LinearSVC trained using stochastic gradient descent."""
+    def __init__(self, estimator=None):
+        """Initialize an SGDLinearSVC"""
+        self.base_weight = None
+        sgd = lm.SGDClassifier(loss="squared_hinge",
+                               alpha=0.5,
+                               warm_start=False)
+
+        if estimator is None:
+            estimator = sgd
+
+        super().__init__(estimator)
+
+    def set_weight(self, y):
+        """Set class weights"""
+        if self.base_weight is None:
+            self.base_weight = self.get_params()["estimator__class_weight"]
+
+        total = len(y)
+        pos = np.array(y.sum())
+        neg = total - pos
+        new_weight = copy.copy(self.base_weight)
+        new_weight[0] = new_weight[0] * neg / pos
+        new_weight[1] = new_weight[1] * pos / neg
+        self.set_params(**{"estimator__class_weight": new_weight})
+
+    def fit(self, X, y, **fit_kwargs):
+        """Fit the model"""
+        self.set_weight(y)
+        return super().fit(X, y, **fit_kwargs)
 
 
 class DummyScaler():

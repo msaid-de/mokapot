@@ -494,8 +494,6 @@ class LinearPsmDataset(PsmDataset):
         if targets is None:
             targets = np.array(self.targets)
 
-        print(targets)
-
         qvals = qvalues.tdc(scores, target=targets, desc=desc)
         unlabeled = np.logical_and(qvals > eval_fdr, targets)
         new_labels = np.ones(len(qvals))
