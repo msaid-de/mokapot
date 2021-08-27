@@ -67,11 +67,12 @@ def test_cli_options(tmp_path, scope_files):
         "--max_iter",
         "1",
         "--keep_decoys",
+        "--subset_max_train",
+        "100000",  # 140158 PSMs in total
     ]
 
     subprocess.run(cmd, check=True)
     file_bases = [f.name.split(".")[0] for f in scope_files[0:2]]
-
     assert Path(tmp_path, f"blah.{file_bases[0]}.mokapot.psms.txt").exists()
     assert Path(
         tmp_path, f"blah.{file_bases[0]}.mokapot.peptides.txt"

@@ -87,7 +87,7 @@ def main():
         max_iter=config.max_iter,
         direction=config.direction,
         override=config.override,
-        subset_max_train=config.subset_max_train,
+        subset_max_train=int(config.subset_max_train / config.folds),
     )
 
     # Fit the models:

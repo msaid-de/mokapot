@@ -1,5 +1,13 @@
 # Changelog for mokapot  
 
+## [0.8.0] - 2021-08-27
+### Changed
+- The `--subset_max_train` formerly referred to the number of PSMs to use 
+  within each cross-validation split. Now it refers to the subset of PSMs 
+  overall, which is more intuitive. Correspondingly, the number of PSMs 
+  used for training within each cross validation split will be 
+  `subset_max_train / # folds`.
+
 ## [0.7.3] - 2021-07-20
 ### Fixed
 - Fixed bug where the `--keep_decoys` did not work with `--aggregate`. Also,
