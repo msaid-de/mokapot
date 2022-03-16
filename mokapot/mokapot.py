@@ -16,7 +16,7 @@ from .parsers.pin import read_pin
 from .parsers.pepxml import read_pepxml
 from .parsers.fasta import read_fasta
 from .brew import brew
-from .model import PercolatorModel
+from .model import PercolatorModel, save_weights
 
 
 def main():
@@ -101,6 +101,17 @@ def main():
 
     if config.dest_dir is not None:
         Path(config.dest_dir).mkdir(exist_ok=True)
+
+    if config.weights is not None:
+        logging.info("Saving weights...")
+        out_weights_file = config.weights
+        if config.file_root is not None:
+            out_weights_file = ".".join([config.file_root, out_weights_file])
+        if config.dest_dir is not None:
+            out_weights_file = Path(config.dest_dir, out_weights_file)
+        with open(str(out_weights_file), "w") as outfile:
+            for trained_model in models:
+                save_weights(trained_model, outfile)
 
     if config.save_models:
         logging.info("Saving models...")
