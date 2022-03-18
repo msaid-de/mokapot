@@ -536,7 +536,7 @@ def load_model(model_file):
 
 def save_weights(model, file):
     df = pd.DataFrame(
-        [list(model.estimator.coef_.flatten())], columns=model.features
+        [[], list(model.estimator.coef_.flatten())], columns=model.features
     )
     df["m0"] = model.estimator.intercept_[0]
     df.to_csv(file, mode="a", sep="\t", index=False)
