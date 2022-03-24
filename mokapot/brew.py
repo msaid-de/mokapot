@@ -93,6 +93,8 @@ def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
         )
     else:
         models = [[model, False]] * 3
+        for m in models:
+            m[0].scaler.fit(next(iter(train_sets)).features.values)
 
     # Determine if the models need to be reset:
     reset = any([m[1] for m in models])

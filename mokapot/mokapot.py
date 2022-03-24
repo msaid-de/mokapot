@@ -16,7 +16,7 @@ from .parsers.pin import read_pin
 from .parsers.pepxml import read_pepxml
 from .parsers.fasta import read_fasta
 from .brew import brew
-from .model import PercolatorModel, load_model, from .model import PercolatorModel, save_weights
+from .model import PercolatorModel, load_model, save_weights
 
 
 def main():

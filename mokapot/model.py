@@ -515,7 +515,7 @@ def load_model(model_file):
         logging.info("Loading the Percolator model.")
 
         weight_cols = [c for c in weights.index if c != "m0"]
-        model = Model(estimator=LinearSVC(), scaler="as-is")
+        model = Model(estimator=LinearSVC(), scaler=StandardScaler())
         weight_vals = weights.loc[weight_cols]
         weight_vals = weight_vals[np.newaxis, :]
         model.estimator.coef_ = weight_vals
