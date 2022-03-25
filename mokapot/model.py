@@ -534,6 +534,14 @@ def load_model(model_file):
     return model
 
 
+def save_weights(model, file):
+    df = pd.DataFrame(
+        [[], list(model.estimator.coef_.flatten())], columns=model.features
+    )
+    df["m0"] = model.estimator.intercept_[0]
+    df.to_csv(file, mode="a", sep="\t", index=False)
+
+
 # Private Functions -----------------------------------------------------------
 def _get_starting_labels(psms, model):
     """

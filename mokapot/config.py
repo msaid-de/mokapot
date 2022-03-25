@@ -249,6 +249,12 @@ def _parser():
     )
 
     parser.add_argument(
+        "--weights",
+        type=str,
+        help=("Save the weights of models learned by mokapot."),
+    )
+
+    parser.add_argument(
         "--keep_decoys",
         default=False,
         action="store_true",
