@@ -86,10 +86,15 @@ def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
 
-    models = Parallel(n_jobs=max_workers, require="sharedmem")(
-        delayed(_fit_model)(d, copy.deepcopy(model), f)
-        for f, d in enumerate(train_sets)
-    )
+    if not model.is_trained:
+        models = Parallel(n_jobs=max_workers, require="sharedmem")(
+            delayed(_fit_model)(d, copy.deepcopy(model), f)
+            for f, d in enumerate(train_sets)
+        )
+    else:
+        models = [[model, False]] * 3
+        for m in models:
+            m[0].scaler.fit(next(iter(train_sets)).features.values)
 
     # Determine if the models need to be reset:
     reset = any([m[1] for m in models])
