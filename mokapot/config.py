@@ -253,13 +253,9 @@ def _parser():
     )
 
     parser.add_argument(
-        "--init_weights", type=str, help=("Use saved weights to load model."),
-    )
-
-    parser.add_argument(
-        "--weights",
+        "--init_weights",
         type=str,
-        help=("Save the weights of models learned by mokapot."),
+        help=("Use saved models and skip training."),
     )
 
     parser.add_argument(
