@@ -96,6 +96,9 @@ def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
         for m in models:
             m[0].scaler.fit(next(iter(train_sets)).features.values)
 
+    # sort models to have deterministic results with multithreading.
+    # Only way I found to sort is using intercept values
+    models.sort(key=lambda x: x[0].estimator.intercept_)
     # Determine if the models need to be reset:
     reset = any([m[1] for m in models])
     if reset:
