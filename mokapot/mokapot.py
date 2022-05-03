@@ -1,6 +1,7 @@
 """
 This is the command line interface for mokapot
 """
+import os
 import sys
 import time
 import logging
@@ -16,7 +17,7 @@ from .parsers.pin import read_pin
 from .parsers.pepxml import read_pepxml
 from .parsers.fasta import read_fasta
 from .brew import brew
-from .model import PercolatorModel, load_model, save_weights
+from .model import PercolatorModel, load_model
 
 
 def main():
@@ -83,7 +84,15 @@ def main():
 
     # Define a model:
     if config.init_weights:
-        model = load_model(str(config.init_weights))
+        model_files = os.listdir(str(config.init_weights))
+        if len(model_files) != config.folds:
+            raise RuntimeError(
+                "Number of loaded models should be equal to the number of folds."
+            )
+        model = [
+            load_model(os.path.join(str(config.init_weights), model_file))
+            for model_file in model_files
+        ]
     else:
         model = PercolatorModel(
             train_fdr=config.train_fdr,
@@ -104,18 +113,6 @@ def main():
 
     if config.dest_dir is not None:
         Path(config.dest_dir).mkdir(exist_ok=True)
-
-    if config.weights is not None:
-        logging.info("Saving weights...")
-        out_weights_file = config.weights
-        if config.file_root is not None:
-            out_weights_file = ".".join([config.file_root, out_weights_file])
-        if config.dest_dir is not None:
-            out_weights_file = Path(config.dest_dir, out_weights_file)
-        with open(str(out_weights_file), "w") as outfile:
-            for trained_model in models:
-                save_weights(trained_model, outfile)
-
     if config.save_models:
         logging.info("Saving models...")
         for i, trained_model in enumerate(models):
