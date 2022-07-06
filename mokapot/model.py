@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.svm import LinearSVC
-from sklearn.model_selection import GridSearchCV
+from sklearn.experimental import enable_halving_search_cv
+from sklearn.model_selection import HalvingGridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 
@@ -425,7 +426,7 @@ class PercolatorModel(Model):
         """Initialize a PercolatorModel"""
         self.n_jobs = n_jobs
         svm_model = LinearSVC(dual=False, random_state=7)
-        estimator = GridSearchCV(
+        estimator = HalvingGridSearchCV(
             svm_model,
             param_grid=PERC_GRID,
             refit=False,
