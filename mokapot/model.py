@@ -432,6 +432,7 @@ class PercolatorModel(Model):
             refit=False,
             cv=3,
             n_jobs=n_jobs,
+            random_state=3,
         )
 
         super().__init__(
