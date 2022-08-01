@@ -304,6 +304,15 @@ def _parser():
         ),
     )
 
+    parser.add_argument(
+        "--train_sample",
+        type=int,
+        help=(
+            "Specify the sampling ratio for training data."
+            "example: 10(%), 20(%), ..."
+        ),
+    )
+
     return parser
 
 
