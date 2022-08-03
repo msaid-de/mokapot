@@ -305,11 +305,12 @@ def _parser():
     )
 
     parser.add_argument(
-        "--train_sample",
+        "--n_subset_max_train",
         type=int,
         help=(
             "Specify the sampling ratio for training data."
             "example: 10(%), 20(%), ..."
+            "This is helpful for very large files when the training data doesn't fit into memory"
         ),
     )
 
