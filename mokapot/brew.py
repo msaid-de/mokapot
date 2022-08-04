@@ -14,7 +14,14 @@ LOGGER = logging.getLogger(__name__)
 
 
 # Functions -------------------------------------------------------------------
-def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
+def brew(
+    psms,
+    model=None,
+    test_fdr=0.01,
+    folds=3,
+    max_workers=1,
+    n_subset_max_train=None,
+):
     """
     Re-score one or more collection of PSMs.
 
@@ -81,7 +88,7 @@ def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
 
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_idx = [p._split(folds) for p in psms]
-    train_sets = _make_train_sets(psms, test_idx)
+    train_sets = _make_train_sets(psms, test_idx, n_subset_max_train)
     if max_workers != 1:
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
@@ -164,7 +171,7 @@ def brew(psms, model=None, test_fdr=0.01, folds=3, max_workers=1):
 
 
 # Utility Functions -----------------------------------------------------------
-def _make_train_sets(psms, test_idx):
+def _make_train_sets(psms, test_idx, n_subset_max_train):
     """
     Parameters
     ----------
@@ -184,8 +191,12 @@ def _make_train_sets(psms, test_idx):
         train_set._data = None
         data = []
         for i, j, dset in zip(idx, all_idx, psms):
-            data.append(dset.data.loc[list(j - set(i)), :])
-
+            train_idx = list(j - set(i))
+            if n_subset_max_train:
+                train_idx = np.random.choice(
+                    train_idx, len(train_idx) // n_subset_max_train
+                )
+            data.append(dset.data.loc[train_idx])
         train_set._data = pd.concat(data, ignore_index=True)
         yield train_set
 

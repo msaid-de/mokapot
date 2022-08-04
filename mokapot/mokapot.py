@@ -109,6 +109,7 @@ def main():
         test_fdr=config.test_fdr,
         folds=config.folds,
         max_workers=config.max_workers,
+        n_subset_max_train=config.n_subset_max_train,
     )
 
     if config.dest_dir is not None:

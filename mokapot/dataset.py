@@ -234,6 +234,32 @@ class PsmDataset(ABC):
 
         self._proteins = proteins
 
+    def _targets_count_by_feature(self, desc, eval_fdr):
+        """
+        iterate over features and count the number of positive examples
+
+        :param desc: bool
+            Are high scores better for the best feature?
+        :param eval_fdr: float
+            The false discovery rate threshold to use.
+        :return: pd.Series
+            The number of positive examples for each feature.
+        """
+        return pd.Series(
+            [
+                (
+                    self._update_labels(
+                        self.data.loc[:, col],
+                        eval_fdr=eval_fdr,
+                        desc=desc,
+                    )
+                    == 1
+                ).sum()
+                for col in self._feature_columns
+            ],
+            index=self._feature_columns,
+        )
+
     def _find_best_feature(self, eval_fdr):
         """
         Find the best feature to separate targets from decoys at the
@@ -262,18 +288,16 @@ class PsmDataset(ABC):
         best_positives = 0
         new_labels = None
         for desc in (True, False):
-            labs = self.features.apply(
-                self._update_labels, eval_fdr=eval_fdr, desc=desc
-            )
-
-            num_passing = (labs == 1).sum()
+            num_passing = self._targets_count_by_feature(desc, eval_fdr)
             feat_idx = num_passing.idxmax()
             num_passing = num_passing[feat_idx]
 
             if num_passing > best_positives:
                 best_positives = num_passing
                 best_feat = feat_idx
-                new_labels = labs.loc[:, feat_idx].values
+                new_labels = self._update_labels(
+                    self.data.loc[:, feat_idx], eval_fdr=eval_fdr, desc=desc
+                )
                 best_desc = desc
 
         if best_feat is None:
