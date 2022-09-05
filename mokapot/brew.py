@@ -20,7 +20,7 @@ def brew(
     test_fdr=0.01,
     folds=3,
     max_workers=1,
-    n_subset_max_train=None,
+    subset_max_train=None,
 ):
     """
     Re-score one or more collection of PSMs.
@@ -56,6 +56,11 @@ def brew(
         run time. An integer exceeding the number of folds will have
         no additional effect. Note that logging messages will be garbled
         if more than one worker is enabled.
+    subset_max_train : int or None, optional
+        Use only a random subset of the PSMs for training. This is useful
+        for very large datasets or models that scale poorly with the
+        number of PSMs. The default, :code:`None` will use all of the
+        PSMs.
 
     Returns
     -------
@@ -88,7 +93,7 @@ def brew(
 
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_idx = [p._split(folds) for p in psms]
-    train_sets = _make_train_sets(psms, test_idx, n_subset_max_train)
+    train_sets = _make_train_sets(psms, test_idx, subset_max_train)
     if max_workers != 1:
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
@@ -171,7 +176,7 @@ def brew(
 
 
 # Utility Functions -----------------------------------------------------------
-def _make_train_sets(psms, test_idx, n_subset_max_train):
+def _make_train_sets(psms, test_idx, subset_max_train):
     """
     Parameters
     ----------
@@ -179,6 +184,8 @@ def _make_train_sets(psms, test_idx, n_subset_max_train):
         The PsmDataset to get a subset of.
     test_idx : list of list of numpy.ndarray
         The indicies of the test sets
+    subset_max_train : int or None
+        The number of PSMs for training.
 
     Yields
     ------
@@ -192,10 +199,24 @@ def _make_train_sets(psms, test_idx, n_subset_max_train):
         data = []
         for i, j, dset in zip(idx, all_idx, psms):
             train_idx = list(j - set(i))
-            if n_subset_max_train:
-                train_idx = np.random.choice(
-                    train_idx, len(train_idx) // n_subset_max_train
-                )
+            if subset_max_train is not None:
+                if subset_max_train > len(train_idx):
+                    LOGGER.warning(
+                        "The provided subset value (%i) is larger than the number "
+                        "of psms in the training split (%i), so it will be "
+                        "ignored.",
+                        subset_max_train,
+                        len(train_idx),
+                    )
+                else:
+                    LOGGER.info(
+                        "Subsetting PSMs (%i) to (%i).",
+                        len(train_idx),
+                        subset_max_train,
+                    )
+                    train_idx = np.random.choice(
+                        train_idx, subset_max_train, replace=False
+                    )
             data.append(dset.data.loc[train_idx])
         train_set._data = pd.concat(data, ignore_index=True)
         yield train_set

@@ -99,7 +99,6 @@ def main():
             max_iter=config.max_iter,
             direction=config.direction,
             override=config.override,
-            subset_max_train=config.subset_max_train,
         )
 
     # Fit the models:
@@ -109,7 +108,7 @@ def main():
         test_fdr=config.test_fdr,
         folds=config.folds,
         max_workers=config.max_workers,
-        n_subset_max_train=config.n_subset_max_train,
+        subset_max_train=config.subset_max_train,
     )
 
     if config.dest_dir is not None:
