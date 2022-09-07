@@ -79,11 +79,6 @@ class Model:
     override : bool, optional
         If the learned model performs worse than the best feature, should
         the model still be used?
-    subset_max_train : int or None, optional
-        Use only a random subset of the PSMs for training. This is useful
-        for very large datasets or models that scale poorly with the
-        number of PSMs. The default, :code:`None` will use all of the
-        PSMs.
     shuffle : bool, optional
         Should the order of PSMs be randomized for training? For deterministic
         algorithms, this will have no effect.
@@ -110,8 +105,6 @@ class Model:
     override : bool
         If the learned model performs worse than the best feature, should
         the model still be used?
-    subset_max_train : int
-        The number of PSMs for training.
     shuffle : bool
         Is the order of PSMs shuffled for training?
     """
@@ -124,14 +117,12 @@ class Model:
         max_iter=10,
         direction=None,
         override=False,
-        subset_max_train=None,
         shuffle=True,
     ):
         """Initialize a Model object"""
         self.estimator = clone(estimator)
         self.features = None
         self.is_trained = False
-        self.subset_max_train = subset_max_train
 
         if scaler == "as-is":
             self.scaler = DummyScaler()
@@ -255,28 +246,6 @@ class Model:
                 len(psms.data),
             )
 
-        if self.subset_max_train is not None:
-            if self.subset_max_train > len(psms):
-                LOGGER.warning(
-                    "The provided subset value (%i) is larger than the number "
-                    "of psms in the training split (%i), so it will be "
-                    "ignored.",
-                    self.subset_max_train,
-                    len(psms),
-                )
-            else:
-                LOGGER.info(
-                    "Subsetting PSMs (%i) to (%i).",
-                    len(psms),
-                    self.subset_max_train,
-                )
-                subset_idx = np.random.choice(
-                    len(psms), self.subset_max_train, replace=False
-                )
-
-                psms = copy.copy(psms)
-                psms._data = psms._data.iloc[subset_idx, :]
-
         # Choose the initial direction
         start_labels, feat_pass = _get_starting_labels(psms, self)
 
@@ -373,11 +342,6 @@ class PercolatorModel(Model):
     override : bool, optional
         If the learned model performs worse than the best feature, should
         the model still be used?
-    subset_max_train : int or None, optional
-        Use only a random subset of the PSMs for training. This is useful
-        for very large datasets or models that scale poorly with the
-        number of PSMs. The default, :code:`None` will use all of the
-        PSMs.
     shuffle : bool, optional
         Should the order of PSMs be randomized for training? For deterministic
         algorithms, this will have no effect.
@@ -406,8 +370,6 @@ class PercolatorModel(Model):
     override : bool
         If the learned model performs worse than the best feature, should
         the model still be used?
-    subset_max_train : int or None
-        The number of PSMs for training.
     n_jobs : int
         The number of jobs to use for parallizing the hyperparameter
         grid search.
@@ -420,7 +382,6 @@ class PercolatorModel(Model):
         max_iter=10,
         direction=None,
         override=False,
-        subset_max_train=None,
         n_jobs=-1,
     ):
         """Initialize a PercolatorModel"""
@@ -442,7 +403,6 @@ class PercolatorModel(Model):
             max_iter=max_iter,
             direction=direction,
             override=override,
-            subset_max_train=subset_max_train,
         )
 
 
