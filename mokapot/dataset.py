@@ -94,6 +94,7 @@ class PsmDataset(ABC):
     def __init__(
         self,
         psms,
+        file,
         spectrum_columns,
         feature_columns,
         group_column,
@@ -137,28 +138,6 @@ class PsmDataset(ABC):
             )
         else:
             self._feature_columns = utils.tuplize(feature_columns)
-
-        # Check that features don't have missing values:
-        na_mask = self.features.isna().any(axis=0)
-        if na_mask.any():
-            na_idx = np.where(na_mask)[0]
-            keep_idx = np.where(~na_mask)[0]
-            LOGGER.warning(
-                "Missing values detected in the following features:"
-            )
-            for col in [self._feature_columns[i] for i in na_idx]:
-                LOGGER.warning("  - %s", col)
-
-            LOGGER.warning("Dropping features with missing values...")
-            self._feature_columns = tuple(
-                [self._feature_columns[i] for i in keep_idx]
-            )
-
-        LOGGER.info("Using %i features:", len(self._feature_columns))
-        for i, feat in enumerate(self._feature_columns):
-            LOGGER.info("  (%i)\t%s", i + 1, feat)
-
-        LOGGER.info("Found %i PSMs.", len(self._data))
 
     @property
     def data(self):
@@ -452,6 +431,7 @@ class LinearPsmDataset(PsmDataset):
 
     def __init__(
         self,
+        file,
         psms,
         target_column,
         spectrum_columns,
@@ -491,6 +471,7 @@ class LinearPsmDataset(PsmDataset):
                 other_columns.append(opt_column)
 
         super().__init__(
+            file=file,
             psms=psms,
             spectrum_columns=spectrum_columns,
             feature_columns=feature_columns,
@@ -655,6 +636,7 @@ class CrossLinkedPsmDataset(PsmDataset):
 
     def __init__(
         self,
+        file,
         psms: pd.DataFrame,
         spectrum_columns,
         target_columns,
@@ -682,6 +664,7 @@ class CrossLinkedPsmDataset(PsmDataset):
         )
 
         super().__init__(
+            file=file,
             psms=psms,
             spectrum_columns=spectrum_columns,
             feature_columns=feature_columns,

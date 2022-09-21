@@ -36,9 +36,10 @@ def main():
     }
 
     logging.basicConfig(
-        format=("[{levelname}] {message}"),
+        format=("[ {asctime} {levelname}] {message}"),
         style="{",
         level=verbosity_dict[config.verbosity],
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     logging.info("mokapot version %s", str(__version__))
@@ -57,7 +58,11 @@ def main():
     # Parse Datasets
     parse = get_parser(config)
     if config.aggregate or len(config.psm_files) == 1:
-        datasets = parse(config.psm_files)
+        datasets = parse(
+            config.psm_files,
+            config.folds,
+            subset_max_train=config.subset_max_train,
+        )
     else:
         datasets = [parse(f) for f in config.psm_files]
         prefixes = [Path(f).stem for f in config.psm_files]
