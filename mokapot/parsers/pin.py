@@ -158,6 +158,7 @@ def read_pin(
 
     print("here *************")
 
+    """
     # Check that features don't have missing values:
     for column in columns:
         logging.info("checking %s", column)
@@ -179,8 +180,7 @@ def read_pin(
     LOGGER.info("Using %i features:", len(features))
     for i, feat in enumerate(features):
         LOGGER.info("  (%i)\t%s", i + 1, feat)
-
-    # Convert labels to the correct format.
+    """
     """
     cols = perc.readline().rstrip().split("\t")
     dir_line = perc.readline().rstrip().split("\t")[0]

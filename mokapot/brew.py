@@ -11,6 +11,11 @@ from joblib import Parallel, delayed
 from .model import PercolatorModel
 from . import utils
 from .dataset import LinearPsmDataset
+from .confidence import (
+    LinearConfidence,
+    CrossLinkedConfidence,
+    GroupedConfidence,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -111,21 +116,21 @@ def brew(
         subset_max_train=subset_max_train,
         data_size=len(df_spectra),
     )
-    # test_idx = [p._split(folds) for p in psms]
-    # train_sets = _make_train_sets(psms, test_idx, subset_max_train)
+
     if max_workers != 1:
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
 
-    print(train_sets[0])
+    train_psms = _parse_in_chunks(psms=psms, train_idx=train_sets)
 
     if type(model) is list:
         models = [[m, False] for m in model]
     else:
         models = Parallel(n_jobs=max_workers, require="sharedmem")(
-            delayed(_fit_model)(d, copy.deepcopy(model), f)
-            for f, d in enumerate(train_sets)
+            delayed(_fit_model)(d, psms, copy.deepcopy(model), f)
+            for f, d in enumerate(train_psms)
         )
+    del train_psms
 
     # sort models to have deterministic results with multithreading.
     # Only way I found to sort is using intercept values
@@ -140,23 +145,19 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        print(psms)
-        scores = [
-            _predict(p, i, models, test_fdr) for p, i in zip([psms], test_idx)
-        ]
+        scores = [_predict(p, psms, models, test_fdr) for p in test_idx]
     else:
         # If model training has failed
         scores = [np.zeros(len(p.data)) for p in psms]
-
     # Find which is best: the learned model, the best feature, or
     # a pretrained model.
     if type(model) is not list and not model.override:
-        best_feats = [p._find_best_feature(test_fdr) for p in psms]
+        best_feats = [find_best_feature(p, test_fdr) for p in [psms]]
         feat_total = sum([best_feat[1] for best_feat in best_feats])
     else:
         feat_total = 0
 
-    preds = [p._update_labels(s, test_fdr) for p, s in zip(psms, scores)]
+    preds = [_update_labels(p, s, test_fdr) for p, s in zip([psms], scores)]
     pred_total = sum([(pred == 1).sum() for pred in preds])
 
     # Here, f[0] is the name of the best feature, and f[3] is a boolean
@@ -164,8 +165,9 @@ def brew(
         using_best_feat = True
         scores = []
         descs = []
-        for dat, (feat, _, _, desc) in zip(psms, best_feats):
-            scores.append(dat.data[feat].values)
+        for dat, (feat, _, _, desc) in zip(psms["files"], best_feats):
+            df = pd.read_csv(dat, sep="\t", usecols=[feat])
+            scores.append(df.values)
             descs.append(desc)
 
     else:
@@ -187,8 +189,8 @@ def brew(
 
     LOGGER.info("")
     res = [
-        p.assign_confidence(s, eval_fdr=test_fdr, desc=d)
-        for p, s, d in zip(psms, scores, descs)
+        assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
+        for p, s, d in zip([psms], scores, descs)
     ]
 
     if len(res) == 1:
@@ -254,7 +256,7 @@ def make_train_sets(psms, test_idx, subset_max_train, data_size):
     """
     all_idx = [set(range(data_size))]
     for idx in zip(*test_idx):
-        data = []
+        train_idx = []
         for i, j, dset in zip(idx, all_idx, psms["files"]):
             train_idx = list(j - set(i))
             if subset_max_train is not None:
@@ -275,44 +277,174 @@ def make_train_sets(psms, test_idx, subset_max_train, data_size):
                     train_idx = np.random.choice(
                         train_idx, subset_max_train, replace=False
                     )
-            data.append(
-                pd.concat(
-                    (
-                        c
-                        for c in _parse_in_chunks(
-                            dset, psms["columns"], train_idx
-                        )
-                    ),
-                    copy=False,
+
+        yield train_idx
+
+
+def _create_psms(psms, data):
+
+    data = pd.concat(data)
+    data[psms["target_column"]] = data[psms["target_column"]].astype(int)
+    if any(data[psms["target_column"]] == -1):
+        data[psms["target_column"]] = (
+            (data[psms["target_column"]] + 1) / 2
+        ).astype(bool)
+
+    return LinearPsmDataset(
+        psms=data,
+        file=psms["files"][0],
+        target_column=psms["target_column"],
+        spectrum_columns=psms["spectrum_columns"],
+        peptide_column=psms["peptide_column"],
+        protein_column=psms["protein_column"],
+        group_column=psms["group_column"],
+        feature_columns=psms["feature_columns"],
+        filename_column=psms["filename_column"],
+        scan_column=psms["scan_column"],
+        calcmass_column=psms["calcmass_column"],
+        expmass_column=psms["expmass_column"],
+        rt_column=psms["rt_column"],
+        charge_column=psms["charge_column"],
+        copy_data=False,
+    )
+
+
+def func(psms, eval_fdr, columns, desc):
+    print(columns)
+    with open(psms["files"][0]) as f:
+        df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"], columns])
+    _data = _create_psms(
+        psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+    )
+    return (
+        _data._update_labels(
+            scores=_data.data.loc[:, columns], eval_fdr=eval_fdr, desc=desc
+        )
+        == 1
+    ).sum()
+
+
+def find_best_feature(psms, eval_fdr):
+    best_feat = None
+    best_positives = 0
+    new_labels = None
+    CHUNK_SIZE = 6
+    column_slices = [
+        psms["feature_columns"][i : i + CHUNK_SIZE]
+        for i in range(0, len(psms["feature_columns"]), CHUNK_SIZE)
+    ]
+    for desc in (True, False):
+        labs = [
+            (
+                Parallel(n_jobs=-1, require="sharedmem")(
+                    delayed(func)(
+                        psms=psms, eval_fdr=eval_fdr, columns=c, desc=desc
+                    )
+                    for c in col
                 )
             )
-        _data = pd.concat(data, ignore_index=True)
-        _data[psms["target_column"]] = _data[psms["target_column"]].astype(int)
-        if any(_data[psms["target_column"]] == -1):
-            _data[psms["target_column"]] = (
-                (_data[psms["target_column"]] + 1) / 2
-            ).astype(bool)
+            for col in column_slices
+        ]
 
-        yield LinearPsmDataset(
-            psms=_data,
-            file=psms["files"],
-            target_column=psms["target_column"],
-            spectrum_columns=psms["spectrum_columns"],
-            peptide_column=psms["peptide_column"],
-            protein_column=psms["protein_column"],
-            group_column=psms["group_column"],
-            feature_columns=psms["feature_columns"],
-            filename_column=psms["filename_column"],
-            scan_column=psms["scan_column"],
-            calcmass_column=psms["calcmass_column"],
-            expmass_column=psms["expmass_column"],
-            rt_column=psms["rt_column"],
-            charge_column=psms["charge_column"],
-            copy_data=False,
+        print(utils.flatten(labs))
+        num_passing = pd.Series(
+            utils.flatten(labs), index=psms["feature_columns"]
         )
+        print(num_passing)
+        feat_idx = num_passing.idxmax()
+        num_passing = num_passing[feat_idx]
+
+        if num_passing > best_positives:
+            best_positives = num_passing
+            best_feat = feat_idx
+            with open(psms["files"][0]) as f:
+                df = pd.read_csv(
+                    f, sep="\t", usecols=[best_feat, psms["target_column"]]
+                )
+            _data = _create_psms(
+                psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+            )
+            print(_data.data.loc[:, best_feat])
+            print(desc)
+            new_labels = _data._update_labels(
+                scores=_data.data.loc[:, best_feat],
+                eval_fdr=eval_fdr,
+                desc=desc,
+            )
+            best_desc = desc
+
+    if best_feat is None:
+        raise RuntimeError("No PSMs found below the 'eval_fdr'.")
+
+    return best_feat, best_positives, new_labels, best_desc
 
 
-def _parse_in_chunks(filename, columns, train_idx=None, chunk_size=int(1e7)):
+def _update_labels(psms, scores, eval_fdr=0.01, desc=True):
+    with open(psms["files"][0]) as f:
+        df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"]])
+    _data = _create_psms(
+        psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+    )
+    return _data._update_labels(scores, eval_fdr, desc)
+
+
+def assign_confidence(psms, scores=None, desc=True, eval_fdr=0.01):
+    """Assign confidence to PSMs peptides, and optionally, proteins.
+
+    Two forms of confidence estimates are calculated: q-values---the
+    minimum false discovery rate (FDR) at which a given PSM would be
+    accepted---and posterior error probabilities (PEPs)---the probability
+    that a given PSM is incorrect. For more information see the
+    :doc:`Confidence Estimation <confidence>` page.
+
+    Parameters
+    ----------
+    scores : numpy.ndarray
+        The scores by which to rank the PSMs. The default, :code:`None`,
+        uses the feature that accepts the most PSMs at an FDR threshold of
+        `eval_fdr`.
+    desc : bool
+        Are higher scores better?
+    eval_fdr : float
+        The FDR threshold at which to report and evaluate performance. If
+        `scores` is not :code:`None`, this parameter has no affect on the
+        analysis itself, but does affect logging messages and the FDR
+        threshold applied for some output formats, such as FlashLFQ.
+
+    Returns
+    -------
+    LinearConfidence
+        A :py:class:`~mokapot.confidence.LinearConfidence` object storing
+        the confidence estimates for the collection of PSMs.
+    """
+    if scores is None:
+        feat, _, _, desc = find_best_feature(psms, eval_fdr)
+        LOGGER.info("Selected %s as the best feature.", feat)
+        scores = pd.read_csv(psms["files"][0], sep="\t", usecols=feat).values
+
+    data = pd.read_csv(
+        psms["files"][0],
+        sep="\t",
+        usecols=[
+            psms["target_column"],
+            psms["peptide_column"],
+            psms["protein_column"],
+            psms["spectrum_columns"][0],
+            psms["spectrum_columns"][1],
+        ],
+    )
+    data = _create_psms(
+        psms=psms, data=[data.apply(pd.to_numeric, errors="ignore")]
+    )
+    if psms["group_column"] is None:
+        LOGGER.info("Assigning confidence...")
+        return LinearConfidence(data, scores, eval_fdr=eval_fdr, desc=desc)
+    else:
+        LOGGER.info("Assigning confidence within groups...")
+        return GroupedConfidence(data, scores, eval_fdr=eval_fdr, desc=desc)
+
+
+def _parse_in_chunks(psms, train_idx, chunk_size=1000000):
     """
     Parse a file in chunks
 
@@ -330,17 +462,25 @@ def _parse_in_chunks(filename, columns, train_idx=None, chunk_size=int(1e7)):
     pandas.DataFrame
         The chunk of PSMs
     """
+    train_psms = [[] for _ in range(len(train_idx))]
     with pd.read_csv(
-        filename, sep="\t", chunksize=chunk_size, usecols=columns
+        psms["files"][0],
+        sep="\t",
+        chunksize=chunk_size,
+        usecols=psms["columns"],
     ) as reader:
-        for i, psms in enumerate(reader):
+        for i, chunk in enumerate(reader):
             logging.info("chunk %i", i)
-            idx = list(set(train_idx) & set(psms.index))
-            psms = psms.loc[idx]
-    yield psms.apply(pd.to_numeric, errors="ignore")
+            for k, train in enumerate(train_idx):
+                idx = list(set(train) & set(chunk.index))
+                train_psms[k].append(
+                    chunk.loc[idx].apply(pd.to_numeric, errors="ignore")
+                )
+
+    return train_psms
 
 
-def _predict(psms, test_idx, models, test_fdr):
+def _predict(test_idx, psms, models, test_fdr):
     """
     Return the new scores for the dataset
 
@@ -357,58 +497,35 @@ def _predict(psms, test_idx, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        _data = pd.concat(
-            (
-                c
-                for c in _parse_in_chunks(
-                    psms["files"][0], psms["columns"], fold_idx
-                )
-            ),
-            copy=False,
-        )
-        _data[psms["target_column"]] = _data[psms["target_column"]].astype(int)
-        if any(_data[psms["target_column"]] == -1):
-            _data[psms["target_column"]] = (
-                (_data[psms["target_column"]] + 1) / 2
-            ).astype(bool)
-        test_set = LinearPsmDataset(
-            psms=_data,
-            file=psms["files"][0],
-            target_column=psms["target_column"],
-            spectrum_columns=psms["spectrum_columns"],
-            peptide_column=psms["peptide_column"],
-            protein_column=psms["protein_column"],
-            group_column=psms["group_column"],
-            feature_columns=psms["feature_columns"],
-            filename_column=psms["filename_column"],
-            scan_column=psms["scan_column"],
-            calcmass_column=psms["calcmass_column"],
-            expmass_column=psms["expmass_column"],
-            rt_column=psms["rt_column"],
-            charge_column=psms["charge_column"],
-            copy_data=False,
-        )
+        CHUNK_SIZE = 2000000
+        index_slices = [
+            fold_idx[i : i + CHUNK_SIZE]
+            for i in range(0, len(fold_idx), CHUNK_SIZE)
+        ]
+        for index_slice in index_slices:
 
-        # Don't calibrate if using predict_proba.
-        try:
-            mod.estimator.decision_function
-            scores.append(
-                test_set._calibrate_scores(mod.predict(test_set), test_fdr)
-            )
-        except AttributeError:
-            scores.append(mod.predict(test_set))
-        except RuntimeError:
-            raise RuntimeError(
-                "Failed to calibrate scores between cross-validation folds, "
-                "because no target PSMs could be found below 'test_fdr'. Try "
-                "raising 'test_fdr'."
-            )
+            fold_idx = _parse_in_chunks(psms=psms, train_idx=[index_slice])
+            fold_idx = _create_psms(psms, fold_idx[0])
+            # Don't calibrate if using predict_proba.
+            try:
+                mod.estimator.decision_function
+                scores.append(
+                    fold_idx._calibrate_scores(mod.predict(fold_idx), test_fdr)
+                )
+            except AttributeError:
+                scores.append(mod.predict(fold_idx))
+            except RuntimeError:
+                raise RuntimeError(
+                    "Failed to calibrate scores between cross-validation folds, "
+                    "because no target PSMs could be found below 'test_fdr'. Try "
+                    "raising 'test_fdr'."
+                )
 
     rev_idx = np.argsort(sum(test_idx, [])).tolist()
     return np.concatenate(scores)[rev_idx]
 
 
-def _fit_model(train_set, model, fold):
+def _fit_model(train_set, psms, model, fold):
     """
     Fit the estimator using the training data.
 
@@ -429,6 +546,7 @@ def _fit_model(train_set, model, fold):
     LOGGER.info("")
     LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
     reset = False
+    train_set = _create_psms(psms, train_set)
     try:
         model.fit(train_set)
     except RuntimeError as msg:
