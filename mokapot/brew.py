@@ -273,6 +273,7 @@ def make_train_sets(psms, test_idx, subset_max_train, data_size):
                         len(train_idx),
                         subset_max_train,
                     )
+                    np.random.seed(1)
                     train_idx = np.random.choice(
                         train_idx, subset_max_train, replace=False
                     )

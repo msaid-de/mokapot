@@ -212,7 +212,7 @@ class Model:
         """Alias for :py:meth:`decision_function`."""
         return self.decision_function(psms)
 
-    def fit(self, psms, seed):
+    def fit(self, psms):
         """
         Fit the model using the Percolator algorithm.
 
@@ -254,7 +254,7 @@ class Model:
         norm_feat = self.scaler.fit_transform(psms.features.values)
 
         # Shuffle order
-        np.random.seed(seed)
+        np.random.seed(1)
         shuffled_idx = np.random.permutation(np.arange(len(start_labels)))
         original_idx = np.argsort(shuffled_idx)
         if self.shuffle:
