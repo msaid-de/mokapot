@@ -158,6 +158,8 @@ def read_pin(
 
     print("here *************")
 
+    LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.")
+
     """
     # Check that features don't have missing values:
     for column in columns:

@@ -221,9 +221,8 @@ def _split(data, folds):
         split.
     """
     scans = list(data.groupby(list(data.columns), sort=False).indices.values())
-    for indices in scans:
-        np.random.shuffle(indices)
-
+    # or indices in scans:
+    # np.random.shuffle(indices)
     np.random.shuffle(scans)
     scans = list(scans)
 
@@ -282,14 +281,12 @@ def make_train_sets(psms, test_idx, subset_max_train, data_size):
 
 
 def _create_psms(psms, data):
-
-    data = pd.concat(data)
+    # data = pd.concat(data)
     data[psms["target_column"]] = data[psms["target_column"]].astype(int)
     if any(data[psms["target_column"]] == -1):
         data[psms["target_column"]] = (
             (data[psms["target_column"]] + 1) / 2
         ).astype(bool)
-
     return LinearPsmDataset(
         psms=data,
         file=psms["files"][0],
@@ -310,11 +307,11 @@ def _create_psms(psms, data):
 
 
 def func(psms, eval_fdr, columns, desc):
-    print(columns)
+    # print(columns)
     with open(psms["files"][0]) as f:
         df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"], columns])
     _data = _create_psms(
-        psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+        psms=psms, data=df.apply(pd.to_numeric, errors="ignore")
     )
     return (
         _data._update_labels(
@@ -328,29 +325,15 @@ def find_best_feature(psms, eval_fdr):
     best_feat = None
     best_positives = 0
     new_labels = None
-    CHUNK_SIZE = 6
-    column_slices = [
-        psms["feature_columns"][i : i + CHUNK_SIZE]
-        for i in range(0, len(psms["feature_columns"]), CHUNK_SIZE)
-    ]
     for desc in (True, False):
-        labs = [
-            (
-                Parallel(n_jobs=-1, require="sharedmem")(
-                    delayed(func)(
-                        psms=psms, eval_fdr=eval_fdr, columns=c, desc=desc
-                    )
-                    for c in col
-                )
-            )
-            for col in column_slices
-        ]
-
-        print(utils.flatten(labs))
-        num_passing = pd.Series(
-            utils.flatten(labs), index=psms["feature_columns"]
+        labs = Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(func)(psms=psms, eval_fdr=eval_fdr, columns=c, desc=desc)
+            for c in psms["feature_columns"]
         )
-        print(num_passing)
+
+        # print(labs)
+        num_passing = pd.Series(labs, index=psms["feature_columns"])
+        # print(num_passing)
         feat_idx = num_passing.idxmax()
         num_passing = num_passing[feat_idx]
 
@@ -362,10 +345,10 @@ def find_best_feature(psms, eval_fdr):
                     f, sep="\t", usecols=[best_feat, psms["target_column"]]
                 )
             _data = _create_psms(
-                psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+                psms=psms, data=df.apply(pd.to_numeric, errors="ignore")
             )
-            print(_data.data.loc[:, best_feat])
-            print(desc)
+            # print(_data.data.loc[:, best_feat])
+            # print(desc)
             new_labels = _data._update_labels(
                 scores=_data.data.loc[:, best_feat],
                 eval_fdr=eval_fdr,
@@ -383,7 +366,7 @@ def _update_labels(psms, scores, eval_fdr=0.01, desc=True):
     with open(psms["files"][0]) as f:
         df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"]])
     _data = _create_psms(
-        psms=psms, data=[df.apply(pd.to_numeric, errors="ignore")]
+        psms=psms, data=df.apply(pd.to_numeric, errors="ignore")
     )
     return _data._update_labels(scores, eval_fdr, desc)
 
@@ -434,7 +417,7 @@ def assign_confidence(psms, scores=None, desc=True, eval_fdr=0.01):
         ],
     )
     data = _create_psms(
-        psms=psms, data=[data.apply(pd.to_numeric, errors="ignore")]
+        psms=psms, data=data.apply(pd.to_numeric, errors="ignore")
     )
     if psms["group_column"] is None:
         LOGGER.info("Assigning confidence...")
@@ -470,14 +453,17 @@ def _parse_in_chunks(psms, train_idx, chunk_size=1000000):
         usecols=psms["columns"],
     ) as reader:
         for i, chunk in enumerate(reader):
-            logging.info("chunk %i", i)
+            # logging.info("chunk %i", i)
             for k, train in enumerate(train_idx):
                 idx = list(set(train) & set(chunk.index))
                 train_psms[k].append(
                     chunk.loc[idx].apply(pd.to_numeric, errors="ignore")
                 )
 
-    return train_psms
+    return [
+        pd.concat(df).reindex(orig_idx)
+        for df, orig_idx in zip(train_psms, train_idx)
+    ]
 
 
 def _predict(test_idx, psms, models, test_fdr):
@@ -497,7 +483,7 @@ def _predict(test_idx, psms, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        CHUNK_SIZE = 2000000
+        CHUNK_SIZE = 2500000
         index_slices = [
             fold_idx[i : i + CHUNK_SIZE]
             for i in range(0, len(fold_idx), CHUNK_SIZE)
@@ -547,6 +533,7 @@ def _fit_model(train_set, psms, model, fold):
     LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
     reset = False
     train_set = _create_psms(psms, train_set)
+    print(train_set.data)
     try:
         model.fit(train_set)
     except RuntimeError as msg:

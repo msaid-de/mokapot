@@ -483,11 +483,6 @@ class LinearPsmDataset(PsmDataset):
         self._data[target_column] = self._data[target_column].astype(bool)
         num_targets = (self.targets).sum()
         num_decoys = (~self.targets).sum()
-        LOGGER.info(
-            "  - %i target PSMs and %i decoy PSMs detected.",
-            num_targets,
-            num_decoys,
-        )
 
         if not num_targets:
             raise ValueError("No target PSMs were detected.")
