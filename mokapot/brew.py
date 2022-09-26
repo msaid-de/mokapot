@@ -13,7 +13,6 @@ from . import utils
 from .dataset import LinearPsmDataset
 from .confidence import (
     LinearConfidence,
-    CrossLinkedConfidence,
     GroupedConfidence,
 )
 
@@ -282,7 +281,6 @@ def make_train_sets(psms, test_idx, subset_max_train, data_size):
 
 
 def _create_psms(psms, data):
-    # data = pd.concat(data)
     data[psms["target_column"]] = data[psms["target_column"]].astype(int)
     if any(data[psms["target_column"]] == -1):
         data[psms["target_column"]] = (
@@ -308,7 +306,6 @@ def _create_psms(psms, data):
 
 
 def func(psms, eval_fdr, columns, desc):
-    # print(columns)
     with open(psms["files"][0]) as f:
         df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"], columns])
     _data = _create_psms(
@@ -484,7 +481,7 @@ def _predict(test_idx, psms, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        CHUNK_SIZE = 2500000
+        CHUNK_SIZE = 2700000
         index_slices = [
             fold_idx[i : i + CHUNK_SIZE]
             for i in range(0, len(fold_idx), CHUNK_SIZE)
@@ -534,7 +531,6 @@ def _fit_model(train_set, psms, model, fold):
     LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
     reset = False
     train_set = _create_psms(psms, train_set)
-    print(train_set.data)
     try:
         model.fit(train_set)
     except RuntimeError as msg:

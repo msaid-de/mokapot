@@ -457,8 +457,6 @@ class LinearConfidence(Confidence):
             # Calculate PEPs
             LOGGER.info("Assiging PEPs to %s...", level)
             try:
-                print(scores)
-                print(targets)
                 _, pep = qvality.getQvaluesFromScores(
                     scores[targets], scores[~targets], includeDecoys=True
                 )

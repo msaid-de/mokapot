@@ -6,6 +6,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from .. import utils
 from ..dataset import LinearPsmDataset
@@ -156,57 +157,28 @@ def read_pin(
             " verify that the required columns are present."
         )
 
-    print("here *************")
-
     LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.")
 
-    """
     # Check that features don't have missing values:
-    for column in columns:
-        logging.info("checking %s", column)
-        with fopen(pin_files[0]) as perc:
-            feature = pd.read_csv(perc, sep="\t", usecols=[column])
-        na_mask = feature.isna().any(axis=0)
-        if na_mask.any():
-            na_idx = np.where(na_mask)[0]
-            keep_idx = np.where(~na_mask)[0]
-            LOGGER.warning(
-                "Missing values detected in the following features:"
-            )
-            for col in [features[i] for i in na_idx]:
-                LOGGER.warning("  - %s", col)
+    features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(drop_missing_values)(file=pin_files[0], column=c)
+        for c in features
+    )
+    features_to_drop = [drop for drop in features_to_drop if drop]
+    if len(features_to_drop) > 1:
+        LOGGER.warning("Missing values detected in the following features:")
+        for col in features_to_drop:
+            LOGGER.warning("  - %s", col)
 
-            LOGGER.warning("Dropping features with missing values...")
-            _feature_columns = tuple([features[i] for i in keep_idx])
+        LOGGER.warning("Dropping features with missing values...")
+    _feature_columns = tuple(
+        [feature for feature in features if feature not in features_to_drop]
+    )
 
-    LOGGER.info("Using %i features:", len(features))
-    for i, feat in enumerate(features):
+    LOGGER.info("Using %i features:", len(_feature_columns))
+    for i, feat in enumerate(_feature_columns):
         LOGGER.info("  (%i)\t%s", i + 1, feat)
-    """
-    """
-    cols = perc.readline().rstrip().split("\t")
-    dir_line = perc.readline().rstrip().split("\t")[0]
-    if dir_line.lower() != "defaultdirection":
-        perc.seek(0)
-        _ = perc.readline()
 
-    psms = pd.concat((c for c in _parse_in_chunks(perc, cols)), copy=False)
-    with fopen(pin_files[0]) as perc:
-        psms = file_obj.readlines(chunk_size)
-        if not psms:
-            break
-
-        psms = [l.rstrip().split("\t", len(columns) - 1) for l in psms]
-        psms = pd.DataFrame.from_records(psms, columns=columns)
-
-    if pin_df:
-        pin_df[labels[0]] = pin_df[labels[0]].astype(int)
-        if any(pin_df[labels[0]] == -1):
-            pin_df[labels[0]] = ((pin_df[labels[0]] + 1) / 2).astype(bool)
-
-        if to_df:
-            return pin_df
-    """
     return {
         "files": pin_files,
         "columns": columns,
@@ -215,7 +187,7 @@ def read_pin(
         "peptide_column": peptides[0],
         "protein_column": proteins[0],
         "group_column": group_column,
-        "feature_columns": features,
+        "feature_columns": _feature_columns,
         "filename_column": filename,
         "scan_column": scan,
         "calcmass_column": calcmass,
@@ -224,24 +196,11 @@ def read_pin(
         "charge_column": charge,
     }
 
-    """
-    return LinearPsmDataset(
-        file=pin_files,
-        target_column=labels[0],
-        spectrum_columns=spectra,
-        peptide_column=peptides[0],
-        protein_column=proteins[0],
-        group_column=group_column,
-        feature_columns=features,
-        filename_column=filename,
-        scan_column=scan,
-        calcmass_column=calcmass,
-        expmass_column=expmass,
-        rt_column=ret_time,
-        charge_column=charge,
-        copy_data=False,
-    )
-    """
+
+def drop_missing_values(file, column):
+    feature = pd.read_csv(file, sep="\t", usecols=[column])
+    if feature.isna().any(axis=0).any():
+        return column
 
 
 # Utility Functions -----------------------------------------------------------
