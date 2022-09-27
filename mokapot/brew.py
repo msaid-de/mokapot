@@ -481,30 +481,34 @@ def _predict(test_idx, psms, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        CHUNK_SIZE = 2700000
+        CHUNK_SIZE = 10000
         index_slices = [
             fold_idx[i : i + CHUNK_SIZE]
             for i in range(0, len(fold_idx), CHUNK_SIZE)
         ]
+        fold_score = []
         for index_slice in index_slices:
-
-            fold_idx = _parse_in_chunks(psms=psms, train_idx=[index_slice])
-            fold_idx = _create_psms(psms, fold_idx[0])
+            psms_slice = _parse_in_chunks(psms=psms, train_idx=[index_slice])
+            psms_slice = _create_psms(psms, psms_slice[0])
             # Don't calibrate if using predict_proba.
             try:
                 mod.estimator.decision_function
-                scores.append(
-                    fold_idx._calibrate_scores(mod.predict(fold_idx), test_fdr)
+                fold_score.append(
+                    fold_idx._calibrate_scores(
+                        mod.predict(psms_slice), test_fdr
+                    )
                 )
             except AttributeError:
-                scores.append(mod.predict(fold_idx))
+                fold_score.append(mod.predict(psms_slice))
             except RuntimeError:
                 raise RuntimeError(
                     "Failed to calibrate scores between cross-validation folds, "
                     "because no target PSMs could be found below 'test_fdr'. Try "
                     "raising 'test_fdr'."
                 )
-
+            print(len(fold_score))
+        scores.append(np.hstack(fold_score))
+        print(len(scores))
     rev_idx = np.argsort(sum(test_idx, [])).tolist()
     return np.concatenate(scores)[rev_idx]
 
