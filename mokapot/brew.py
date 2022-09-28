@@ -15,6 +15,7 @@ from .confidence import (
     LinearConfidence,
     GroupedConfidence,
 )
+from . import qvalues
 
 LOGGER = logging.getLogger(__name__)
 
@@ -307,13 +308,15 @@ def _create_psms(psms, data):
 
 def func(psms, eval_fdr, columns, desc):
     with open(psms["files"][0]) as f:
-        df = pd.read_csv(f, sep="\t", usecols=[psms["target_column"], columns])
+        df = pd.read_csv(
+            f, sep="\t", usecols=columns + [psms["target_column"]]
+        )
     _data = _create_psms(
         psms=psms, data=df.apply(pd.to_numeric, errors="ignore")
     )
     return (
-        _data._update_labels(
-            scores=_data.data.loc[:, columns], eval_fdr=eval_fdr, desc=desc
+        _data.data.loc[:, columns].apply(
+            _data._update_labels, eval_fdr=eval_fdr, desc=desc
         )
         == 1
     ).sum()
@@ -323,15 +326,22 @@ def find_best_feature(psms, eval_fdr):
     best_feat = None
     best_positives = 0
     new_labels = None
-    for desc in (True, False):
-        labs = Parallel(n_jobs=-1, require="sharedmem")(
-            delayed(func)(psms=psms, eval_fdr=eval_fdr, columns=c, desc=desc)
-            for c in psms["feature_columns"]
-        )
 
-        # print(labs)
-        num_passing = pd.Series(labs, index=psms["feature_columns"])
-        # print(num_passing)
+    CHUNK_SIZE = 2
+    col_slices = [
+        psms["feature_columns"][i : i + CHUNK_SIZE]
+        for i in range(0, len(psms["feature_columns"]), CHUNK_SIZE)
+    ]
+    for desc in (True, False):
+        logging.info("update labels : %s", desc)
+        labs = Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(func)(
+                psms=psms, eval_fdr=eval_fdr, columns=list(c), desc=desc
+            )
+            for c in col_slices
+        )
+        logging.info("num passing : %s", desc)
+        num_passing = pd.concat(labs)
         feat_idx = num_passing.idxmax()
         num_passing = num_passing[feat_idx]
 
@@ -353,6 +363,8 @@ def find_best_feature(psms, eval_fdr):
                 desc=desc,
             )
             best_desc = desc
+        del labs
+        del num_passing
 
     if best_feat is None:
         raise RuntimeError("No PSMs found below the 'eval_fdr'.")
@@ -481,36 +493,144 @@ def _predict(test_idx, psms, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        CHUNK_SIZE = 10000
+
+        calibration = True
+        try:
+            mod.estimator.decision_function
+        except AttributeError:
+            calibration = False
+
+        CHUNK_SIZE = 2500000
         index_slices = [
             fold_idx[i : i + CHUNK_SIZE]
             for i in range(0, len(fold_idx), CHUNK_SIZE)
         ]
-        fold_score = []
+        logging.info("predict fold")
+        fold_scores = []
+        targets = []
         for index_slice in index_slices:
+            CHUNK_SIZE_pred = 312500
+            pred_slices = [
+                index_slice[i : i + CHUNK_SIZE_pred]
+                for i in range(0, len(index_slice), CHUNK_SIZE_pred)
+            ]
+            psms_slice = _parse_in_chunks(psms=psms, train_idx=pred_slices)
+            psms_slice = [
+                _create_psms(psms, psm_slice) for psm_slice in psms_slice
+            ]
+            targets = targets + [psm_slice.targets for psm_slice in psms_slice]
+            fold_scores = fold_scores + Parallel(
+                n_jobs=-1, require="sharedmem"
+            )(delayed(mod.predict)(psms=p) for p in psms_slice)
+            """
             psms_slice = _parse_in_chunks(psms=psms, train_idx=[index_slice])
             psms_slice = _create_psms(psms, psms_slice[0])
+            targets.append(psms_slice.targets)
             # Don't calibrate if using predict_proba.
             try:
                 mod.estimator.decision_function
                 fold_score.append(
-                    fold_idx._calibrate_scores(
-                        mod.predict(psms_slice), test_fdr
-                    )
+                        mod.predict(psms_slice)
                 )
+                print("calib")
             except AttributeError:
                 fold_score.append(mod.predict(psms_slice))
+                calib = False
+                print("no calib")
             except RuntimeError:
                 raise RuntimeError(
                     "Failed to calibrate scores between cross-validation folds, "
                     "because no target PSMs could be found below 'test_fdr'. Try "
                     "raising 'test_fdr'."
                 )
-            print(len(fold_score))
-        scores.append(np.hstack(fold_score))
-        print(len(scores))
+            """
+
+        if calibration:
+            try:
+                scores.append(
+                    _calibrate_scores(
+                        np.hstack(fold_scores), np.hstack(targets), test_fdr
+                    )
+                )
+            except RuntimeError:
+                raise RuntimeError(
+                    "Failed to calibrate scores between cross-validation folds, "
+                    "because no target PSMs could be found below 'test_fdr'. Try "
+                    "raising 'test_fdr'."
+                )
+        else:
+            scores.append(np.hstack)
+
     rev_idx = np.argsort(sum(test_idx, [])).tolist()
     return np.concatenate(scores)[rev_idx]
+
+
+def _calibrate_scores(scores, targets, eval_fdr, desc=True):
+    """
+    Calibrate scores as described in Granholm et al. [1]_
+
+    .. [1] Granholm V, Noble WS, Käll L. A cross-validation scheme
+       for machine learning algorithms in shotgun proteomics. BMC
+       Bioinformatics. 2012;13 Suppl 16(Suppl 16):S3.
+       doi:10.1186/1471-2105-13-S16-S3
+
+    Parameters
+    ----------
+    scores : numpy.ndarray
+        The scores for each PSM.
+    eval_fdr: float
+        The FDR threshold to use for calibration
+    desc: bool
+        Are higher scores better?
+
+    Returns
+    -------
+    numpy.ndarray
+        An array of calibrated scores.
+    """
+    labels = update_labels(scores, targets, eval_fdr, desc)
+    pos = labels == 1
+    if not pos.sum():
+        raise RuntimeError(
+            "No target PSMs were below the 'eval_fdr' threshold."
+        )
+
+    target_score = np.min(scores[pos])
+    decoy_score = np.median(scores[labels == -1])
+
+    return (scores - target_score) / (target_score - decoy_score)
+
+
+def update_labels(scores, targets, eval_fdr=0.01, desc=True):
+    """Return the label for each PSM, given it's score.
+
+    This method is used during model training to define positive examples,
+    which are traditionally the target PSMs that fall within a specified
+    FDR threshold.
+
+    Parameters
+    ----------
+    scores : numpy.ndarray
+        The score used to rank the PSMs.
+    eval_fdr : float
+        The false discovery rate threshold to use.
+    desc : bool
+        Are higher scores better?
+
+    Returns
+    -------
+    np.ndarray
+        The label of each PSM, where 1 indicates a positive example, -1
+        indicates a negative example, and 0 removes the PSM from training.
+        Typically, 0 is reserved for targets, below a specified FDR
+        threshold.
+    """
+    qvals = qvalues.tdc(scores, target=targets, desc=desc)
+    unlabeled = np.logical_and(qvals > eval_fdr, targets)
+    new_labels = np.ones(len(qvals))
+    new_labels[~targets] = -1
+    new_labels[unlabeled] = 0
+    return new_labels
 
 
 def _fit_model(train_set, psms, model, fold):

@@ -160,11 +160,17 @@ def read_pin(
     LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.")
 
     # Check that features don't have missing values:
+    CHUNK_SIZE = 19
+    feat_slices = [
+        features[i : i + CHUNK_SIZE]
+        for i in range(0, len(features), CHUNK_SIZE)
+    ]
     features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
         delayed(drop_missing_values)(file=pin_files[0], column=c)
-        for c in features
+        for c in feat_slices
     )
     features_to_drop = [drop for drop in features_to_drop if drop]
+    features_to_drop = utils.flatten(features_to_drop)
     if len(features_to_drop) > 1:
         LOGGER.warning("Missing values detected in the following features:")
         for col in features_to_drop:
@@ -198,9 +204,21 @@ def read_pin(
 
 
 def drop_missing_values(file, column):
-    feature = pd.read_csv(file, sep="\t", usecols=[column])
-    if feature.isna().any(axis=0).any():
-        return column
+    logging.info("check column %s", column)
+    na_mask = pd.DataFrame([], columns=column)
+    with pd.read_csv(
+        file,
+        sep="\t",
+        chunksize=4000000,
+        usecols=column,
+    ) as reader:
+        for i, feature in enumerate(reader):
+            na_mask = na_mask.append(
+                pd.DataFrame([feature.isna().any(axis=0)]), ignore_index=True
+            )
+        na_mask = na_mask.isna().any(axis=0)
+        if na_mask.any():
+            return na_mask[~na_mask].index
 
 
 # Utility Functions -----------------------------------------------------------
