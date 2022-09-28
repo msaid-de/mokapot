@@ -192,10 +192,8 @@ def _make_train_sets(psms, test_idx, subset_max_train):
     PsmDataset
         The training set.
     """
-    train_set = copy.copy(psms[0])
     all_idx = [set(range(len(p.data))) for p in psms]
     for idx in zip(*test_idx):
-        train_set._data = None
         data = []
         for i, j, dset in zip(idx, all_idx, psms):
             train_idx = list(j - set(i))
@@ -218,8 +216,9 @@ def _make_train_sets(psms, test_idx, subset_max_train):
                         train_idx, subset_max_train, replace=False
                     )
             data.append(dset.data.loc[train_idx])
-        train_set._data = pd.concat(data, ignore_index=True)
-        yield train_set
+        psm_copy = copy.copy(psms[0])
+        psm_copy._data = pd.concat(data, ignore_index=True)
+        yield psm_copy
 
 
 def _predict(dset, test_idx, models, test_fdr):
