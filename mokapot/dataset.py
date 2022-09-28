@@ -94,7 +94,6 @@ class PsmDataset(ABC):
     def __init__(
         self,
         psms,
-        file,
         spectrum_columns,
         feature_columns,
         group_column,
@@ -307,52 +306,9 @@ class PsmDataset(ABC):
         numpy.ndarray
             An array of calibrated scores.
         """
-        labels = self._update_labels(scores, eval_fdr, desc)
-        pos = labels == 1
-        if not pos.sum():
-            raise RuntimeError(
-                "No target PSMs were below the 'eval_fdr' threshold."
-            )
-
-        target_score = np.min(scores[pos])
-        decoy_score = np.median(scores[labels == -1])
-
-        return (scores - target_score) / (target_score - decoy_score)
-
-    def _split(self, folds):
-        """
-        Get the indices for random, even splits of the dataset.
-
-        Each tuple of integers contains the indices for a random subset of
-        PSMs. PSMs are grouped by spectrum, such that all PSMs from the same
-        spectrum only appear in one split. The typical use for this method
-        is to split the PSMs into cross-validation folds.
-
-        Parameters
-        ----------
-        folds: int
-            The number of splits to generate.
-
-        Returns
-        -------
-        A tuple of tuples of ints
-            Each of the returned tuples contains the indices  of PSMs in a
-            split.
-        """
-        cols = list(self._spectrum_columns)
-        scans = list(self.data.groupby(cols, sort=False).indices.values())
-        np.random.shuffle(scans)
-        scans = list(scans)
-
-        # Split the data evenly
-        num = len(scans) // folds
-        splits = [scans[i : i + num] for i in range(0, len(scans), num)]
-
-        if len(splits[-1]) < num:
-            splits[-2] += splits[-1]
-            splits = splits[:-1]
-
-        return tuple(utils.flatten(s) for s in splits)
+        calibrate_scores(
+            scores=scores, eval_fdr=eval_fdr, desc=desc, targets=self.targets
+        )
 
 
 class LinearPsmDataset(PsmDataset):
@@ -431,7 +387,6 @@ class LinearPsmDataset(PsmDataset):
 
     def __init__(
         self,
-        file,
         psms,
         target_column,
         spectrum_columns,
@@ -471,7 +426,6 @@ class LinearPsmDataset(PsmDataset):
                 other_columns.append(opt_column)
 
         super().__init__(
-            file=file,
             psms=psms,
             spectrum_columns=spectrum_columns,
             feature_columns=feature_columns,
@@ -540,12 +494,9 @@ class LinearPsmDataset(PsmDataset):
             Typically, 0 is reserved for targets, below a specified FDR
             threshold.
         """
-        qvals = qvalues.tdc(scores, target=self.targets, desc=desc)
-        unlabeled = np.logical_and(qvals > eval_fdr, self.targets)
-        new_labels = np.ones(len(qvals))
-        new_labels[~self.targets] = -1
-        new_labels[unlabeled] = 0
-        return new_labels
+        return update_labels_func(
+            scores=scores, targets=self.targets, desc=desc
+        )
 
     def assign_confidence(self, scores=None, desc=True, eval_fdr=0.01):
         """Assign confidence to PSMs peptides, and optionally, proteins.
@@ -581,14 +532,12 @@ class LinearPsmDataset(PsmDataset):
             LOGGER.info("Selected %s as the best feature.", feat)
             scores = self.features[feat].values
 
-        if self._group_column is None:
-            LOGGER.info("Assigning confidence...")
-            return LinearConfidence(self, scores, eval_fdr=eval_fdr, desc=desc)
-        else:
-            LOGGER.info("Assigning confidence within groups...")
-            return GroupedConfidence(
-                self, scores, eval_fdr=eval_fdr, desc=desc
-            )
+        return apply_confidence(
+            psms=self,
+            scores=scores,
+            eval_fdr=eval_fdr,
+            desc=desc,
+        )
 
 
 class CrossLinkedPsmDataset(PsmDataset):
@@ -631,7 +580,6 @@ class CrossLinkedPsmDataset(PsmDataset):
 
     def __init__(
         self,
-        file,
         psms: pd.DataFrame,
         spectrum_columns,
         target_columns,
@@ -659,7 +607,6 @@ class CrossLinkedPsmDataset(PsmDataset):
         )
 
         super().__init__(
-            file=file,
             psms=psms,
             spectrum_columns=spectrum_columns,
             feature_columns=feature_columns,
@@ -730,3 +677,80 @@ class CrossLinkedPsmDataset(PsmDataset):
             confidence for the provided PSMs.
         """
         return CrossLinkedConfidence(self, scores, desc)
+
+
+def update_labels_func(scores, targets, eval_fdr=0.01, desc=True):
+    """Return the label for each PSM, given it's score.
+
+    This method is used during model training to define positive examples,
+    which are traditionally the target PSMs that fall within a specified
+    FDR threshold.
+
+    Parameters
+    ----------
+    scores : numpy.ndarray
+        The score used to rank the PSMs.
+    eval_fdr : float
+        The false discovery rate threshold to use.
+    desc : bool
+        Are higher scores better?
+
+    Returns
+    -------
+    np.ndarray
+        The label of each PSM, where 1 indicates a positive example, -1
+        indicates a negative example, and 0 removes the PSM from training.
+        Typically, 0 is reserved for targets, below a specified FDR
+        threshold.
+    """
+    qvals = qvalues.tdc(scores, target=targets, desc=desc)
+    unlabeled = np.logical_and(qvals > eval_fdr, targets)
+    new_labels = np.ones(len(qvals))
+    new_labels[~targets] = -1
+    new_labels[unlabeled] = 0
+    return new_labels
+
+
+def calibrate_scores(scores, targets, eval_fdr, desc=True):
+    """
+    Calibrate scores as described in Granholm et al. [1]_
+
+    .. [1] Granholm V, Noble WS, Käll L. A cross-validation scheme
+       for machine learning algorithms in shotgun proteomics. BMC
+       Bioinformatics. 2012;13 Suppl 16(Suppl 16):S3.
+       doi:10.1186/1471-2105-13-S16-S3
+
+    Parameters
+    ----------
+    scores : numpy.ndarray
+        The scores for each PSM.
+    eval_fdr: float
+        The FDR threshold to use for calibration
+    desc: bool
+        Are higher scores better?
+
+    Returns
+    -------
+    numpy.ndarray
+        An array of calibrated scores.
+    """
+    labels = update_labels_func(scores, targets, eval_fdr, desc)
+    pos = labels == 1
+    if not pos.sum():
+        raise RuntimeError(
+            "No target PSMs were below the 'eval_fdr' threshold."
+        )
+
+    target_score = np.min(scores[pos])
+    decoy_score = np.median(scores[labels == -1])
+
+    return (scores - target_score) / (target_score - decoy_score)
+
+
+def apply_confidence(psms, scores, eval_fdr, desc):
+    if psms._group_column is None:
+        LOGGER.info("Assigning confidence...")
+        return LinearConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)
+    else:
+        LOGGER.info("Assigning confidence within groups...")
+        return GroupedConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)

@@ -58,11 +58,7 @@ def main():
     # Parse Datasets
     parse = get_parser(config)
     if config.aggregate or len(config.psm_files) == 1:
-        datasets = parse(
-            config.psm_files,
-            config.folds,
-            subset_max_train=config.subset_max_train,
-        )
+        datasets = parse(config.psm_files)
     else:
         datasets = [parse(f) for f in config.psm_files]
         prefixes = [Path(f).stem for f in config.psm_files]

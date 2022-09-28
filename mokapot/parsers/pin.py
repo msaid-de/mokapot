@@ -4,7 +4,6 @@ This module contains the parsers for reading in PSMs
 import gzip
 import logging
 
-import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
@@ -14,11 +13,9 @@ from ..dataset import LinearPsmDataset
 
 LOGGER = logging.getLogger(__name__)
 
-
 # Functions -------------------------------------------------------------------
 def read_pin(
     pin_files,
-    folds,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -27,7 +24,6 @@ def read_pin(
     charge_column=None,
     to_df=False,
     copy_data=False,
-    subset_max_train=None,
 ):
     """Read Percolator input (PIN) tab-delimited files.
 
@@ -99,18 +95,52 @@ def read_pin(
         PSMs from all of the PIN files.
     """
     logging.info("Parsing PSMs...")
-    LOGGER.info("Reading %s...", pin_files[0])
-    if str(pin_files[0]).endswith(".gz"):
-        fopen = gzip.open
-    else:
-        fopen = open
+    return [
+        read_percolator(
+            file,
+            group_column=group_column,
+            filename_column=filename_column,
+            calcmass_column=calcmass_column,
+            expmass_column=expmass_column,
+            rt_column=rt_column,
+            charge_column=charge_column,
+            to_df=to_df,
+            copy_data=copy_data,
+        )
+        for file in utils.tuplize(pin_files)
+    ]
 
-    if isinstance(pin_files, pd.DataFrame):
-        pin_df = pin_files.copy(deep=copy_data)
-        columns = pin_df.columns
-    else:
-        with fopen(pin_files[0]) as perc:
-            columns = perc.readline().rstrip().split("\t")
+
+def read_percolator(
+    perc_file,
+    group_column=None,
+    filename_column=None,
+    calcmass_column=None,
+    expmass_column=None,
+    rt_column=None,
+    charge_column=None,
+    to_df=False,
+    copy_data=False,
+):
+    """
+    Read a Percolator tab-delimited file.
+
+    Percolator input format (PIN) files and the Percolator result files
+    are tab-delimited, but also have a tab-delimited protein list as the
+    final column. This function parses the file and returns a DataFrame.
+
+    Parameters
+    ----------
+    perc_file : str
+        The file to parse.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A DataFrame of the parsed data.
+    """
+    LOGGER.info("Reading %s...", perc_file)
+    columns = read_columns(perc_file, copy_data)
 
     # Find all of the necessary columns, case-insensitive:
     specid = [c for c in columns if c.lower() == "specid"]
@@ -157,16 +187,10 @@ def read_pin(
             " verify that the required columns are present."
         )
 
-    LOGGER.info("  - %i target PSMs and %i decoy PSMs detected.")
-
     # Check that features don't have missing values:
-    CHUNK_SIZE = 19
-    feat_slices = [
-        features[i : i + CHUNK_SIZE]
-        for i in range(0, len(features), CHUNK_SIZE)
-    ]
+    feat_slices = utils.create_chunks(data=features, chunk_size=19)
     features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
-        delayed(drop_missing_values)(file=pin_files[0], column=c)
+        delayed(drop_missing_values)(file=perc_file, column=c)
         for c in feat_slices
     )
     features_to_drop = [drop for drop in features_to_drop if drop]
@@ -186,7 +210,7 @@ def read_pin(
         LOGGER.info("  (%i)\t%s", i + 1, feat)
 
     return {
-        "files": pin_files,
+        "file": perc_file,
         "columns": columns,
         "target_column": labels[0],
         "spectrum_columns": spectra,
@@ -203,8 +227,8 @@ def read_pin(
     }
 
 
+# Utility Functions -----------------------------------------------------------
 def drop_missing_values(file, column):
-    logging.info("check column %s", column)
     na_mask = pd.DataFrame([], columns=column)
     with pd.read_csv(
         file,
@@ -221,69 +245,74 @@ def drop_missing_values(file, column):
             return na_mask[~na_mask].index
 
 
-# Utility Functions -----------------------------------------------------------
-def read_percolator(perc_file):
-    """
-    Read a Percolator tab-delimited file.
-
-    Percolator input format (PIN) files and the Percolator result files
-    are tab-delimited, but also have a tab-delimited protein list as the
-    final column. This function parses the file and returns a DataFrame.
-
-    Parameters
-    ----------
-    perc_file : str
-        The file to parse.
-
-    Returns
-    -------
-    pandas.DataFrame
-        A DataFrame of the parsed data.
-    """
-    LOGGER.info("Reading %s...", perc_file)
-    if str(perc_file).endswith(".gz"):
-        fopen = gzip.open
+def open_file(file):
+    if str(file).endswith(".gz"):
+        return gzip.open(file)
     else:
-        fopen = open
-
-    with fopen(perc_file) as perc:
-        cols = perc.readline().rstrip().split("\t")
-        dir_line = perc.readline().rstrip().split("\t")[0]
-        if dir_line.lower() != "defaultdirection":
-            perc.seek(0)
-            _ = perc.readline()
-
-        psms = pd.concat((c for c in _parse_in_chunks(perc, cols)), copy=False)
-
-    return psms
+        return open(file)
 
 
-def _parse_in_chunks(file_obj, columns, chunk_size=int(1e8)):
+def read_file(file, use_cols):
+    with open_file(file) as f:
+        return pd.read_csv(f, sep="\t", usecols=use_cols)
+
+
+def read_columns(file, copy_data):
+    if isinstance(file, pd.DataFrame):
+        return file.copy(deep=copy_data).columns
+    else:
+        with open_file(file) as perc:
+            return perc.readline().rstrip().split("\t")
+
+
+def parse_in_chunks(psms_info, idx, chunk_size=1500000):
     """
     Parse a file in chunks
 
     Parameters
     ----------
-    file_obj : file object
-        The file to read lines from.
-    columns : list of str
-        The columns for each DataFrame.
+    psms_info : dict object
+        contains all psms info.
+    idx : list of list of indexes
+        The indexes to select from data.
     chunk_size : int
         The chunk size in bytes.
 
     Returns
     -------
-    pandas.DataFrame
-        The chunk of PSMs
+    List
+        list of dataframes
     """
-    while True:
-        psms = file_obj.readlines(chunk_size)
-        if not psms:
-            break
+    train_psms = [[] for _ in range(len(idx))]
+    for file in psms_info["file"]:
+        with pd.read_csv(
+            file,
+            sep="\t",
+            chunksize=chunk_size,
+            usecols=psms_info["columns"],
+        ) as reader:
+            for i, chunk in enumerate(reader):
+                for k, train in enumerate(idx):
+                    idx_ = list(set(train) & set(chunk.index))
+                    train_psms[k].append(
+                        chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
+                    )
 
-        psms = [l.rstrip().split("\t", len(columns) - 1) for l in psms]
-        psms = pd.DataFrame.from_records(psms, columns=columns)
-        yield psms.apply(pd.to_numeric, errors="ignore")
+    return Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(concat_chunks)(df=df, orig_idx=orig_idx)
+        for df, orig_idx in zip(train_psms, idx)
+    )
+
+
+def concat_chunks(df, orig_idx):
+    return pd.concat(df).reindex(orig_idx)
+
+
+def convert_targets_column(data, target_column):
+    data[target_column] = data[target_column].astype(int)
+    if any(data[target_column] == -1):
+        data[target_column] = ((data[target_column] + 1) / 2).astype(bool)
+    return data
 
 
 def _check_column(col, columns, default):
