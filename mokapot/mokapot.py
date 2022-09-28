@@ -108,6 +108,7 @@ def main():
         test_fdr=config.test_fdr,
         folds=config.folds,
         max_workers=config.max_workers,
+        seed=config.seed,
         subset_max_train=config.subset_max_train,
     )
 
