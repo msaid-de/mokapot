@@ -355,8 +355,6 @@ def find_best_feature(psms, eval_fdr):
             _data = _create_psms(
                 psms=psms, data=df.apply(pd.to_numeric, errors="ignore")
             )
-            # print(_data.data.loc[:, best_feat])
-            # print(desc)
             new_labels = _data._update_labels(
                 scores=_data.data.loc[:, best_feat],
                 eval_fdr=eval_fdr,
@@ -437,7 +435,17 @@ def assign_confidence(psms, scores=None, desc=True, eval_fdr=0.01):
         return GroupedConfidence(data, scores, eval_fdr=eval_fdr, desc=desc)
 
 
-def _parse_in_chunks(psms, train_idx, chunk_size=1000000):
+def find_idx_in_chunk(idx, chunk):
+    return chunk.loc[list(set(idx) & set(chunk.index))].apply(
+        pd.to_numeric, errors="ignore"
+    )
+
+
+def concat_chunks(df, orig_idx):
+    return pd.concat(df).reindex(orig_idx)
+
+
+def _parse_in_chunks(psms, train_idx, chunk_size=1500000):
     """
     Parse a file in chunks
 
@@ -463,17 +471,25 @@ def _parse_in_chunks(psms, train_idx, chunk_size=1000000):
         usecols=psms["columns"],
     ) as reader:
         for i, chunk in enumerate(reader):
-            # logging.info("chunk %i", i)
+            # train_psms_chunk = Parallel(
+            # n_jobs=-1, require="sharedmem"
+            # )(delayed(find_idx_in_chunk)(idx=idx, chunk=chunk)
+            #  for idx in train_idx)
             for k, train in enumerate(train_idx):
+                # train_psms[k].append(train_psms_chunk[k])
                 idx = list(set(train) & set(chunk.index))
                 train_psms[k].append(
                     chunk.loc[idx].apply(pd.to_numeric, errors="ignore")
                 )
 
-    return [
-        pd.concat(df).reindex(orig_idx)
+    return Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(concat_chunks)(df=df, orig_idx=orig_idx)
         for df, orig_idx in zip(train_psms, train_idx)
-    ]
+    )
+    # [
+    # pd.concat(df).reindex(orig_idx)
+    # for df, orig_idx in zip(train_psms, train_idx)
+    # ]
 
 
 def _predict(test_idx, psms, models, test_fdr):

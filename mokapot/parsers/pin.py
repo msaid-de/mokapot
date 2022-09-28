@@ -209,7 +209,7 @@ def drop_missing_values(file, column):
     with pd.read_csv(
         file,
         sep="\t",
-        chunksize=4000000,
+        chunksize=4500000,
         usecols=column,
     ) as reader:
         for i, feature in enumerate(reader):
