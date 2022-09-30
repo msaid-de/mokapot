@@ -13,7 +13,7 @@ from .dataset import (
     LinearPsmDataset,
     calibrate_scores,
     apply_confidence,
-    update_labels_func,
+    update_labels,
 )
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
 
@@ -27,6 +27,7 @@ def brew(
     test_fdr=0.01,
     folds=3,
     max_workers=1,
+    seed=1,
     subset_max_train=None,
 ):
     """
@@ -138,7 +139,7 @@ def brew(
         models = [[m, False] for m in model]
     else:
         models = Parallel(n_jobs=max_workers, require="sharedmem")(
-            delayed(_fit_model)(d, psms_info, copy.deepcopy(model), f)
+            delayed(_fit_model)(d, psms_info, copy.deepcopy(model), f, seed)
             for f, d in enumerate(train_psms)
         )
     del train_psms
@@ -234,8 +235,8 @@ def _split(data, folds):
         split.
     """
     scans = list(data.groupby(list(data.columns), sort=False).indices.values())
-    # for indices in scans:
-    # np.random.shuffle(indices)
+    for indices in scans:
+        np.random.shuffle(indices)
     np.random.shuffle(scans)
     scans = list(scans)
 
@@ -313,7 +314,7 @@ def _create_psms(psms_info, data):
     )
 
 
-def find_best_feature_helper(psms_info, eval_fdr, columns, desc):
+def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
     df = pd.concat(
         [
             read_file(
@@ -326,7 +327,7 @@ def find_best_feature_helper(psms_info, eval_fdr, columns, desc):
 
     return (
         df.loc[:, columns].apply(
-            update_labels_func,
+            update_labels,
             targets=df.loc[:, psms_info["target_column"]],
             eval_fdr=eval_fdr,
             desc=desc,
@@ -346,7 +347,7 @@ def find_best_feature(psms_info, eval_fdr):
     for desc in (True, False):
         logging.info("update labels : %s", desc)
         labs = Parallel(n_jobs=-1, require="sharedmem")(
-            delayed(find_best_feature_helper)(
+            delayed(targets_count_by_feature)(
                 psms_info=psms_info,
                 eval_fdr=eval_fdr,
                 columns=list(c),
@@ -372,7 +373,7 @@ def find_best_feature(psms_info, eval_fdr):
                 ],
                 ignore_index=True,
             )
-            new_labels = update_labels_func(
+            new_labels = update_labels(
                 scores=df.loc[:, best_feat],
                 targets=df[psms_info["target_column"]],
                 eval_fdr=eval_fdr,
@@ -394,7 +395,7 @@ def _update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
         ],
         ignore_index=True,
     )
-    return update_labels_func(
+    return update_labels(
         scores=scores,
         targets=df[psms_info["target_column"]],
         eval_fdr=eval_fdr,
@@ -456,40 +457,6 @@ def _predict(test_idx, psms_info, models, test_fdr):
     return np.concatenate(scores)[rev_idx]
 
 
-def _fit_model(train_set, psms_info, model, fold):
-    """
-    Fit the estimator using the training data.
-
-    Parameters
-    ----------
-    train_set : PsmDataset
-        A PsmDataset that specifies the training data
-    model : tuple of Model
-        A Classifier to train.
-
-    Returns
-    -------
-    model : mokapot.model.Model
-        The trained model.
-    reset : bool
-        Whether the models should be reset to their original parameters.
-    """
-    LOGGER.info("")
-    LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
-    reset = False
-    train_set = _create_psms(psms_info, train_set)
-    try:
-        model.fit(train_set)
-    except RuntimeError as msg:
-        if str(msg) != "Model performs worse after training.":
-            raise
-
-        if model.is_trained:
-            reset = True
-
-    return model, reset
-
-
 def assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
     """Assign confidence to PSMs peptides, and optionally, proteins.
 
@@ -538,6 +505,7 @@ def assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
                     psms_info["target_column"],
                     psms_info["peptide_column"],
                     psms_info["protein_column"],
+                    psms_info["specId_column"],
                     psms_info["spectrum_columns"][0],
                     psms_info["spectrum_columns"][1],
                 ],
@@ -556,3 +524,37 @@ def assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
         eval_fdr=eval_fdr,
         desc=desc,
     )
+
+
+def _fit_model(train_set, psms_info, model, fold, seed):
+    """
+    Fit the estimator using the training data.
+
+    Parameters
+    ----------
+    train_set : PsmDataset
+        A PsmDataset that specifies the training data
+    model : tuple of Model
+        A Classifier to train.
+
+    Returns
+    -------
+    model : mokapot.model.Model
+        The trained model.
+    reset : bool
+        Whether the models should be reset to their original parameters.
+    """
+    LOGGER.info("")
+    LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
+    reset = False
+    train_set = _create_psms(psms_info, train_set)
+    try:
+        model.fit(train_set, seed)
+    except RuntimeError as msg:
+        if str(msg) != "Model performs worse after training.":
+            raise
+
+        if model.is_trained:
+            reset = True
+
+    return model, reset

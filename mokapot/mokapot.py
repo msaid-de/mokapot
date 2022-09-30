@@ -36,14 +36,9 @@ def main():
     }
 
     logging.basicConfig(
-        format=("[ {asctime} {levelname}] {message}"),
+        format=("[{levelname}] {message}"),
         style="{",
         level=verbosity_dict[config.verbosity],
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.FileHandler(config.dest_dir + "/log.txt"),
-            logging.StreamHandler(sys.stdout),
-        ],
     )
 
     logging.info("mokapot version %s", str(__version__))

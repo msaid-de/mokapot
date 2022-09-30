@@ -494,9 +494,7 @@ class LinearPsmDataset(PsmDataset):
             Typically, 0 is reserved for targets, below a specified FDR
             threshold.
         """
-        return update_labels_func(
-            scores=scores, targets=self.targets, desc=desc
-        )
+        return update_labels(scores=scores, targets=self.targets, desc=desc)
 
     def assign_confidence(self, scores=None, desc=True, eval_fdr=0.01):
         """Assign confidence to PSMs peptides, and optionally, proteins.
@@ -679,7 +677,7 @@ class CrossLinkedPsmDataset(PsmDataset):
         return CrossLinkedConfidence(self, scores, desc)
 
 
-def update_labels_func(scores, targets, eval_fdr=0.01, desc=True):
+def update_labels(scores, targets, eval_fdr=0.01, desc=True):
     """Return the label for each PSM, given it's score.
 
     This method is used during model training to define positive examples,
@@ -734,7 +732,7 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     numpy.ndarray
         An array of calibrated scores.
     """
-    labels = update_labels_func(scores, targets, eval_fdr, desc)
+    labels = update_labels(scores, targets, eval_fdr, desc)
     pos = labels == 1
     if not pos.sum():
         raise RuntimeError(

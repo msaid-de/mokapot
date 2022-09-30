@@ -220,6 +220,7 @@ def read_percolator(
         "feature_columns": _feature_columns,
         "filename_column": filename,
         "scan_column": scan,
+        "specId_column": specid[0],
         "calcmass_column": calcmass,
         "expmass_column": expmass,
         "rt_column": ret_time,
