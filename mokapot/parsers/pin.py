@@ -254,7 +254,9 @@ def open_file(file):
 
 def read_file(file, use_cols):
     with open_file(file) as f:
-        return pd.read_csv(f, sep="\t", usecols=use_cols)
+        return pd.read_csv(
+            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
+        )
 
 
 def read_columns(file, copy_data):
