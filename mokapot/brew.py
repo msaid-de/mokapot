@@ -20,6 +20,7 @@ def brew(
     test_fdr=0.01,
     folds=3,
     max_workers=1,
+    seed=1,
     subset_max_train=None,
 ):
     """
@@ -102,7 +103,7 @@ def brew(
         models = [[m, False] for m in model]
     else:
         models = Parallel(n_jobs=max_workers, require="sharedmem")(
-            delayed(_fit_model)(d, copy.deepcopy(model), f)
+            delayed(_fit_model)(d, copy.deepcopy(model), f, seed)
             for f, d in enumerate(train_sets)
         )
 
@@ -192,10 +193,8 @@ def _make_train_sets(psms, test_idx, subset_max_train):
     PsmDataset
         The training set.
     """
-    train_set = copy.copy(psms[0])
     all_idx = [set(range(len(p.data))) for p in psms]
     for idx in zip(*test_idx):
-        train_set._data = None
         data = []
         for i, j, dset in zip(idx, all_idx, psms):
             train_idx = list(j - set(i))
@@ -218,8 +217,9 @@ def _make_train_sets(psms, test_idx, subset_max_train):
                         train_idx, subset_max_train, replace=False
                     )
             data.append(dset.data.loc[train_idx])
-        train_set._data = pd.concat(data, ignore_index=True)
-        yield train_set
+        psm_copy = copy.copy(psms[0])
+        psm_copy._data = pd.concat(data, ignore_index=True)
+        yield psm_copy
 
 
 def _predict(dset, test_idx, models, test_fdr):
@@ -261,7 +261,7 @@ def _predict(dset, test_idx, models, test_fdr):
     return np.concatenate(scores)[rev_idx]
 
 
-def _fit_model(train_set, model, fold):
+def _fit_model(train_set, model, fold, seed):
     """
     Fit the estimator using the training data.
 
@@ -283,7 +283,7 @@ def _fit_model(train_set, model, fold):
     LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
     reset = False
     try:
-        model.fit(train_set)
+        model.fit(train_set, seed)
     except RuntimeError as msg:
         if str(msg) != "Model performs worse after training.":
             raise
