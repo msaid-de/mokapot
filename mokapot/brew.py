@@ -12,12 +12,16 @@ from . import utils
 from .dataset import (
     LinearPsmDataset,
     calibrate_scores,
-    apply_confidence,
+    assign_confidence,
     update_labels,
 )
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
 
 LOGGER = logging.getLogger(__name__)
+CHUNK_SIZE_READ_ALL_DATA = 1500000
+CHUNK_SIZE_UPDATE_LABELS_COLUMNS = 2
+CHUNK_SIZE_ROWS_PREDICTION = 2500000
+CHUNK_SIZE_THREAD_PREDICTION = 312500
 
 
 # Functions -------------------------------------------------------------------
@@ -133,7 +137,11 @@ def brew(
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
 
-    train_psms = parse_in_chunks(psms_info=psms_info, idx=train_sets)
+    train_psms = parse_in_chunks(
+        psms_info=psms_info,
+        idx=train_sets,
+        chunk_size=CHUNK_SIZE_READ_ALL_DATA,
+    )
 
     if type(model) is list:
         models = [[m, False] for m in model]
@@ -180,7 +188,13 @@ def brew(
         scores = []
         descs = []
         for dat, (feat, _, _, desc) in zip(psms_info["file"], best_feats):
-            df = pd.read_csv(dat, sep="\t", usecols=[feat])
+            df = pd.read_csv(
+                dat,
+                sep="\t",
+                usecols=[feat],
+                index_col=False,
+                on_bad_lines="skip",
+            )
             scores.append(df.values)
             descs.append(desc)
 
@@ -203,7 +217,7 @@ def brew(
 
     LOGGER.info("")
     res = [
-        assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
+        _assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
         for p, s, d in zip([psms_info], scores, descs)
     ]
 
@@ -342,10 +356,10 @@ def find_best_feature(psms_info, eval_fdr):
     new_labels = None
 
     col_slices = utils.create_chunks(
-        data=psms_info["feature_columns"], chunk_size=2
+        data=psms_info["feature_columns"],
+        chunk_size=CHUNK_SIZE_UPDATE_LABELS_COLUMNS,
     )
     for desc in (True, False):
-        logging.info("update labels : %s", desc)
         labs = Parallel(n_jobs=-1, require="sharedmem")(
             delayed(targets_count_by_feature)(
                 psms_info=psms_info,
@@ -355,7 +369,6 @@ def find_best_feature(psms_info, eval_fdr):
             )
             for c in col_slices
         )
-        logging.info("num passing : %s", desc)
         num_passing = pd.concat(labs)
         feat_idx = num_passing.idxmax()
         num_passing = num_passing[feat_idx]
@@ -420,15 +433,20 @@ def _predict(test_idx, psms_info, models, test_fdr):
     """
     scores = []
     for fold_idx, mod in zip(test_idx, models):
-        index_slices = utils.create_chunks(data=fold_idx, chunk_size=2500000)
-        logging.info("predict fold")
+        index_slices = utils.create_chunks(
+            data=fold_idx, chunk_size=CHUNK_SIZE_ROWS_PREDICTION
+        )
         fold_scores = []
         targets = []
         for index_slice in index_slices:
             pred_slices = utils.create_chunks(
-                data=index_slice, chunk_size=312500
+                data=index_slice, chunk_size=CHUNK_SIZE_THREAD_PREDICTION
             )
-            psms_slice = parse_in_chunks(psms_info=psms_info, idx=pred_slices)
+            psms_slice = parse_in_chunks(
+                psms_info=psms_info,
+                idx=pred_slices,
+                chunk_size=CHUNK_SIZE_READ_ALL_DATA,
+            )
             psms_slice = [
                 _create_psms(psms_info, psm_slice) for psm_slice in psms_slice
             ]
@@ -457,17 +475,13 @@ def _predict(test_idx, psms_info, models, test_fdr):
     return np.concatenate(scores)[rev_idx]
 
 
-def assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
+def _assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
     """Assign confidence to PSMs peptides, and optionally, proteins.
-
-    Two forms of confidence estimates are calculated: q-values---the
-    minimum false discovery rate (FDR) at which a given PSM would be
-    accepted---and posterior error probabilities (PEPs)---the probability
-    that a given PSM is incorrect. For more information see the
-    :doc:`Confidence Estimation <confidence>` page.
 
     Parameters
     ----------
+    psms_info : dict
+        All info about the input data
     scores : numpy.ndarray
         The scores by which to rank the PSMs. The default, :code:`None`,
         uses the feature that accepts the most PSMs at an FDR threshold of
@@ -518,7 +532,7 @@ def assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
     data = _create_psms(
         psms_info=psms_info, data=data.apply(pd.to_numeric, errors="ignore")
     )
-    return apply_confidence(
+    return assign_confidence(
         psms=data,
         scores=scores,
         eval_fdr=eval_fdr,

@@ -12,6 +12,9 @@ from ..dataset import LinearPsmDataset
 
 
 LOGGER = logging.getLogger(__name__)
+CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS = 19
+CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS = 4500000
+
 
 # Functions -------------------------------------------------------------------
 def read_pin(
@@ -22,7 +25,6 @@ def read_pin(
     expmass_column=None,
     rt_column=None,
     charge_column=None,
-    to_df=False,
     copy_data=False,
 ):
     """Read Percolator input (PIN) tab-delimited files.
@@ -104,7 +106,6 @@ def read_pin(
             expmass_column=expmass_column,
             rt_column=rt_column,
             charge_column=charge_column,
-            to_df=to_df,
             copy_data=copy_data,
         )
         for file in utils.tuplize(pin_files)
@@ -119,7 +120,6 @@ def read_percolator(
     expmass_column=None,
     rt_column=None,
     charge_column=None,
-    to_df=False,
     copy_data=False,
 ):
     """
@@ -140,8 +140,9 @@ def read_percolator(
         A DataFrame of the parsed data.
     """
     LOGGER.info("Reading %s...", perc_file)
-    columns = read_columns(perc_file, copy_data)
+    columns = get_column_names_from_file(perc_file, copy_data)
 
+    # TODO: Refactor the generation of column variables with simpler implementation
     # Find all of the necessary columns, case-insensitive:
     specid = [c for c in columns if c.lower() == "specid"]
     peptides = [c for c in columns if c.lower() == "peptide"]
@@ -188,7 +189,9 @@ def read_percolator(
         )
 
     # Check that features don't have missing values:
-    feat_slices = utils.create_chunks(data=features, chunk_size=19)
+    feat_slices = utils.create_chunks(
+        data=features, chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS
+    )
     features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
         delayed(drop_missing_values)(file=perc_file, column=c)
         for c in feat_slices
@@ -231,12 +234,12 @@ def read_percolator(
 # Utility Functions -----------------------------------------------------------
 def drop_missing_values(file, column):
     na_mask = pd.DataFrame([], columns=column)
-    with pd.read_csv(
-        file,
-        sep="\t",
-        chunksize=4500000,
-        usecols=column,
-    ) as reader:
+    with open_file(file) as f:
+        reader = read_file_in_chunks(
+            file=f,
+            use_cols=column,
+            chunk_size=CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS,
+        )
         for i, feature in enumerate(reader):
             na_mask = na_mask.append(
                 pd.DataFrame([feature.isna().any(axis=0)]), ignore_index=True
@@ -260,7 +263,21 @@ def read_file(file, use_cols):
         )
 
 
-def read_columns(file, copy_data):
+def read_file_in_chunks(file, chunk_size, use_cols):
+    """
+    when reading in chunks an open file object is required as input to iterate over the chunks
+    """
+    return pd.read_csv(
+        file,
+        sep="\t",
+        chunksize=chunk_size,
+        usecols=use_cols,
+        index_col=False,
+        on_bad_lines="skip",
+    )
+
+
+def get_column_names_from_file(file, copy_data):
     if isinstance(file, pd.DataFrame):
         return file.copy(deep=copy_data).columns
     else:
@@ -268,7 +285,7 @@ def read_columns(file, copy_data):
             return perc.readline().rstrip().split("\t")
 
 
-def parse_in_chunks(psms_info, idx, chunk_size=1500000):
+def parse_in_chunks(psms_info, idx, chunk_size):
     """
     Parse a file in chunks
 
@@ -288,18 +305,15 @@ def parse_in_chunks(psms_info, idx, chunk_size=1500000):
     """
     train_psms = [[] for _ in range(len(idx))]
     for file in psms_info["file"]:
-        with pd.read_csv(
-            file,
-            sep="\t",
-            chunksize=chunk_size,
-            usecols=psms_info["columns"],
-        ) as reader:
-            for i, chunk in enumerate(reader):
-                for k, train in enumerate(idx):
-                    idx_ = list(set(train) & set(chunk.index))
-                    train_psms[k].append(
-                        chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
-                    )
+        reader = read_file_in_chunks(
+            file=file, chunk_size=chunk_size, use_cols=psms_info["columns"]
+        )
+        for i, chunk in enumerate(reader):
+            for k, train in enumerate(idx):
+                idx_ = list(set(train) & set(chunk.index))
+                train_psms[k].append(
+                    chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
+                )
 
     return Parallel(n_jobs=-1, require="sharedmem")(
         delayed(concat_chunks)(df=df, orig_idx=orig_idx)

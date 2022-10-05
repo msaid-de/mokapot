@@ -50,7 +50,7 @@ class PsmDataset(ABC):
         return
 
     @abstractmethod
-    def assign_confidence(self, scores, desc):
+    def _assign_confidence(self, scores, desc):
         """
         Return how to assign confidence.
 
@@ -284,28 +284,6 @@ class PsmDataset(ABC):
         return best_feat, best_positives, new_labels, best_desc
 
     def _calibrate_scores(self, scores, eval_fdr, desc=True):
-        """
-        Calibrate scores as described in Granholm et al. [1]_
-
-        .. [1] Granholm V, Noble WS, Käll L. A cross-validation scheme
-           for machine learning algorithms in shotgun proteomics. BMC
-           Bioinformatics. 2012;13 Suppl 16(Suppl 16):S3.
-           doi:10.1186/1471-2105-13-S16-S3
-
-        Parameters
-        ----------
-        scores : numpy.ndarray
-            The scores for each PSM.
-        eval_fdr: float
-            The FDR threshold to use for calibration
-        desc: bool
-            Are higher scores better?
-
-        Returns
-        -------
-        numpy.ndarray
-            An array of calibrated scores.
-        """
         calibrate_scores(
             scores=scores, eval_fdr=eval_fdr, desc=desc, targets=self.targets
         )
@@ -471,32 +449,10 @@ class LinearPsmDataset(PsmDataset):
         return self.data.loc[:, self._peptide_column]
 
     def _update_labels(self, scores, eval_fdr=0.01, desc=True):
-        """Return the label for each PSM, given it's score.
 
-        This method is used during model training to define positive examples,
-        which are traditionally the target PSMs that fall within a specified
-        FDR threshold.
-
-        Parameters
-        ----------
-        scores : numpy.ndarray
-            The score used to rank the PSMs.
-        eval_fdr : float
-            The false discovery rate threshold to use.
-        desc : bool
-            Are higher scores better?
-
-        Returns
-        -------
-        np.ndarray
-            The label of each PSM, where 1 indicates a positive example, -1
-            indicates a negative example, and 0 removes the PSM from training.
-            Typically, 0 is reserved for targets, below a specified FDR
-            threshold.
-        """
         return update_labels(scores=scores, targets=self.targets, desc=desc)
 
-    def assign_confidence(self, scores=None, desc=True, eval_fdr=0.01):
+    def _assign_confidence(self, scores=None, desc=True, eval_fdr=0.01):
         """Assign confidence to PSMs peptides, and optionally, proteins.
 
         Two forms of confidence estimates are calculated: q-values---the
@@ -530,7 +486,7 @@ class LinearPsmDataset(PsmDataset):
             LOGGER.info("Selected %s as the best feature.", feat)
             scores = self.features[feat].values
 
-        return apply_confidence(
+        return assign_confidence(
             psms=self,
             scores=scores,
             eval_fdr=eval_fdr,
@@ -651,7 +607,7 @@ class CrossLinkedPsmDataset(PsmDataset):
         new_labels[unlabeled] = 0
         return new_labels
 
-    def assign_confidence(self, scores, desc=True):
+    def _assign_confidence(self, scores, desc=True):
         """
         Assign confidence to crosslinked PSMs and peptides.
 
@@ -745,7 +701,7 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     return (scores - target_score) / (target_score - decoy_score)
 
 
-def apply_confidence(psms, scores, eval_fdr, desc):
+def assign_confidence(psms, scores, eval_fdr, desc):
     if psms._group_column is None:
         LOGGER.info("Assigning confidence...")
         return LinearConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)
