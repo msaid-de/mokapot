@@ -4,14 +4,17 @@ This module contains the parsers for reading in PSMs
 import gzip
 import logging
 
-import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from .. import utils
 from ..dataset import LinearPsmDataset
 
 
 LOGGER = logging.getLogger(__name__)
+CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS = 19
+CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS = 4500000
+
 
 # Functions -------------------------------------------------------------------
 def read_pin(
@@ -22,7 +25,6 @@ def read_pin(
     expmass_column=None,
     rt_column=None,
     charge_column=None,
-    to_df=False,
     copy_data=False,
 ):
     """Read Percolator input (PIN) tab-delimited files.
@@ -53,6 +55,7 @@ def read_pin(
     ----------
     pin_files : str, tuple of str, or pandas.DataFrame
         One or more PIN files to read or a :py:class:`pandas.DataFrame`.
+    folds :
     group_column : str, optional
         A factor to by which to group PSMs for grouped confidence
         estimation.
@@ -94,87 +97,31 @@ def read_pin(
         PSMs from all of the PIN files.
     """
     logging.info("Parsing PSMs...")
-
-    if isinstance(pin_files, pd.DataFrame):
-        pin_df = pin_files.copy(deep=copy_data)
-    else:
-        pin_df = pd.concat(
-            [read_percolator(f) for f in utils.tuplize(pin_files)]
+    return [
+        read_percolator(
+            file,
+            group_column=group_column,
+            filename_column=filename_column,
+            calcmass_column=calcmass_column,
+            expmass_column=expmass_column,
+            rt_column=rt_column,
+            charge_column=charge_column,
+            copy_data=copy_data,
         )
-
-    # Find all of the necessary columns, case-insensitive:
-    specid = [c for c in pin_df.columns if c.lower() == "specid"]
-    peptides = [c for c in pin_df.columns if c.lower() == "peptide"]
-    proteins = [c for c in pin_df.columns if c.lower() == "proteins"]
-    labels = [c for c in pin_df.columns if c.lower() == "label"]
-    scan = [c for c in pin_df.columns if c.lower() == "scannr"][0]
-    nonfeat = sum([specid, [scan], peptides, proteins, labels], [])
-
-    # Optional columns
-    filename = _check_column(filename_column, pin_df, "filename")
-    calcmass = _check_column(calcmass_column, pin_df, "calcmass")
-    expmass = _check_column(expmass_column, pin_df, "expmass")
-    ret_time = _check_column(rt_column, pin_df, "ret_time")
-    charge = _check_column(charge_column, pin_df, "charge_column")
-    spectra = [c for c in [filename, scan, ret_time, expmass] if c is not None]
-
-    # Only add charge to features if there aren't other charge columns:
-    alt_charge = [c for c in pin_df.columns if c.lower().startswith("charge")]
-    if charge is not None and len(alt_charge) > 1:
-        nonfeat.append(charge)
-
-    # Add the grouping column
-    if group_column is not None:
-        nonfeat += [group_column]
-        if group_column not in pin_df.columns:
-            raise ValueError(f"The '{group_column} column was not found.")
-
-    for col in [filename, calcmass, expmass, ret_time]:
-        if col is not None:
-            nonfeat.append(col)
-
-    features = [c for c in pin_df.columns if c not in nonfeat]
-
-    # Check for errors:
-    col_names = ["Label", "Peptide", "Proteins"]
-    for col, name in zip([labels, peptides, proteins], col_names):
-        if len(col) > 1:
-            raise ValueError(f"More than one '{name}' column found.")
-
-    if not all([specid, peptides, proteins, labels, spectra]):
-        raise ValueError(
-            "This PIN format is incompatible with mokapot. Please"
-            " verify that the required columns are present."
-        )
-
-    # Convert labels to the correct format.
-    pin_df[labels[0]] = pin_df[labels[0]].astype(int)
-    if any(pin_df[labels[0]] == -1):
-        pin_df[labels[0]] = ((pin_df[labels[0]] + 1) / 2).astype(bool)
-
-    if to_df:
-        return pin_df
-
-    return LinearPsmDataset(
-        psms=pin_df,
-        target_column=labels[0],
-        spectrum_columns=spectra,
-        peptide_column=peptides[0],
-        protein_column=proteins[0],
-        group_column=group_column,
-        feature_columns=features,
-        filename_column=filename,
-        scan_column=scan,
-        calcmass_column=calcmass,
-        expmass_column=expmass,
-        rt_column=ret_time,
-        charge_column=charge,
-        copy_data=False,
-    )
+        for file in utils.tuplize(pin_files)
+    ]
 
 
-# Utility Functions -----------------------------------------------------------
-def read_percolator(perc_file):
+def read_percolator(
+    perc_file,
+    group_column=None,
+    filename_column=None,
+    calcmass_column=None,
+    expmass_column=None,
+    rt_column=None,
+    charge_column=None,
+    copy_data=False,
+):
     """
     Read a Percolator tab-delimited file.
 
@@ -193,60 +140,207 @@ def read_percolator(perc_file):
         A DataFrame of the parsed data.
     """
     LOGGER.info("Reading %s...", perc_file)
-    if str(perc_file).endswith(".gz"):
-        fopen = gzip.open
+    columns = get_column_names_from_file(perc_file, copy_data)
+
+    # TODO: Refactor the generation of column variables with simpler implementation
+    # Find all of the necessary columns, case-insensitive:
+    specid = [c for c in columns if c.lower() == "specid"]
+    peptides = [c for c in columns if c.lower() == "peptide"]
+    proteins = [c for c in columns if c.lower() == "proteins"]
+    labels = [c for c in columns if c.lower() == "label"]
+    scan = [c for c in columns if c.lower() == "scannr"][0]
+    nonfeat = sum([specid, [scan], peptides, proteins, labels], [])
+
+    # Optional columns
+    filename = _check_column(filename_column, columns, "filename")
+    calcmass = _check_column(calcmass_column, columns, "calcmass")
+    expmass = _check_column(expmass_column, columns, "expmass")
+    ret_time = _check_column(rt_column, columns, "ret_time")
+    charge = _check_column(charge_column, columns, "charge_column")
+    spectra = [c for c in [filename, scan, ret_time, expmass] if c is not None]
+
+    # Only add charge to features if there aren't other charge columns:
+    alt_charge = [c for c in columns if c.lower().startswith("charge")]
+    if charge is not None and len(alt_charge) > 1:
+        nonfeat.append(charge)
+
+    # Add the grouping column
+    if group_column is not None:
+        nonfeat += [group_column]
+        if group_column not in columns:
+            raise ValueError(f"The '{group_column} column was not found.")
+
+    for col in [filename, calcmass, expmass, ret_time]:
+        if col is not None:
+            nonfeat.append(col)
+
+    features = [c for c in columns if c not in nonfeat]
+
+    # Check for errors:
+    col_names = ["Label", "Peptide", "Proteins"]
+    for col, name in zip([labels, peptides, proteins], col_names):
+        if len(col) > 1:
+            raise ValueError(f"More than one '{name}' column found.")
+
+    if not all([specid, peptides, proteins, labels, spectra]):
+        raise ValueError(
+            "This PIN format is incompatible with mokapot. Please"
+            " verify that the required columns are present."
+        )
+
+    # Check that features don't have missing values:
+    feat_slices = utils.create_chunks(
+        data=features, chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS
+    )
+    features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(drop_missing_values)(file=perc_file, column=c)
+        for c in feat_slices
+    )
+    features_to_drop = [drop for drop in features_to_drop if drop]
+    features_to_drop = utils.flatten(features_to_drop)
+    if len(features_to_drop) > 1:
+        LOGGER.warning("Missing values detected in the following features:")
+        for col in features_to_drop:
+            LOGGER.warning("  - %s", col)
+
+        LOGGER.warning("Dropping features with missing values...")
+    _feature_columns = tuple(
+        [feature for feature in features if feature not in features_to_drop]
+    )
+
+    LOGGER.info("Using %i features:", len(_feature_columns))
+    for i, feat in enumerate(_feature_columns):
+        LOGGER.info("  (%i)\t%s", i + 1, feat)
+
+    return {
+        "file": perc_file,
+        "columns": columns,
+        "target_column": labels[0],
+        "spectrum_columns": spectra,
+        "peptide_column": peptides[0],
+        "protein_column": proteins[0],
+        "group_column": group_column,
+        "feature_columns": _feature_columns,
+        "filename_column": filename,
+        "scan_column": scan,
+        "specId_column": specid[0],
+        "calcmass_column": calcmass,
+        "expmass_column": expmass,
+        "rt_column": ret_time,
+        "charge_column": charge,
+    }
+
+
+# Utility Functions -----------------------------------------------------------
+def drop_missing_values(file, column):
+    na_mask = pd.DataFrame([], columns=column)
+    with open_file(file) as f:
+        reader = read_file_in_chunks(
+            file=f,
+            use_cols=column,
+            chunk_size=CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS,
+        )
+        for i, feature in enumerate(reader):
+            na_mask = na_mask.append(
+                pd.DataFrame([feature.isna().any(axis=0)]), ignore_index=True
+            )
+        na_mask = na_mask.isna().any(axis=0)
+        if na_mask.any():
+            return na_mask[~na_mask].index
+
+
+def open_file(file):
+    if str(file).endswith(".gz"):
+        return gzip.open(file)
     else:
-        fopen = open
-
-    with fopen(perc_file) as perc:
-        cols = perc.readline().rstrip().split("\t")
-        dir_line = perc.readline().rstrip().split("\t")[0]
-        if dir_line.lower() != "defaultdirection":
-            perc.seek(0)
-            _ = perc.readline()
-
-        psms = pd.concat((c for c in _parse_in_chunks(perc, cols)), copy=False)
-
-    return psms
+        return open(file)
 
 
-def _parse_in_chunks(file_obj, columns, chunk_size=int(1e8)):
+def read_file(file, use_cols):
+    with open_file(file) as f:
+        return pd.read_csv(
+            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
+        )
+
+
+def read_file_in_chunks(file, chunk_size, use_cols):
+    """
+    when reading in chunks an open file object is required as input to iterate over the chunks
+    """
+    return pd.read_csv(
+        file,
+        sep="\t",
+        chunksize=chunk_size,
+        usecols=use_cols,
+        index_col=False,
+        on_bad_lines="skip",
+    )
+
+
+def get_column_names_from_file(file, copy_data):
+    if isinstance(file, pd.DataFrame):
+        return file.copy(deep=copy_data).columns
+    else:
+        with open_file(file) as perc:
+            return perc.readline().rstrip().split("\t")
+
+
+def parse_in_chunks(psms_info, idx, chunk_size):
     """
     Parse a file in chunks
 
     Parameters
     ----------
-    file_obj : file object
-        The file to read lines from.
-    columns : list of str
-        The columns for each DataFrame.
+    psms_info : dict object
+        contains all psms info.
+    idx : list of list of indexes
+        The indexes to select from data.
     chunk_size : int
         The chunk size in bytes.
 
     Returns
     -------
-    pandas.DataFrame
-        The chunk of PSMs
+    List
+        list of dataframes
     """
-    while True:
-        psms = file_obj.readlines(chunk_size)
-        if not psms:
-            break
+    train_psms = [[] for _ in range(len(idx))]
+    for file in psms_info["file"]:
+        reader = read_file_in_chunks(
+            file=file, chunk_size=chunk_size, use_cols=psms_info["columns"]
+        )
+        for i, chunk in enumerate(reader):
+            for k, train in enumerate(idx):
+                idx_ = list(set(train) & set(chunk.index))
+                train_psms[k].append(
+                    chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
+                )
 
-        psms = [l.rstrip().split("\t", len(columns) - 1) for l in psms]
-        psms = pd.DataFrame.from_records(psms, columns=columns)
-        yield psms.apply(pd.to_numeric, errors="ignore")
+    return Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(concat_chunks)(df=df, orig_idx=orig_idx)
+        for df, orig_idx in zip(train_psms, idx)
+    )
 
 
-def _check_column(col, df, default):
+def concat_chunks(df, orig_idx):
+    return pd.concat(df).reindex(orig_idx)
+
+
+def convert_targets_column(data, target_column):
+    data[target_column] = data[target_column].astype(int)
+    if any(data[target_column] == -1):
+        data[target_column] = ((data[target_column] + 1) / 2).astype(bool)
+    return data
+
+
+def _check_column(col, columns, default):
     """Check that a column exists in the dataframe."""
     if col is None:
         try:
-            return [c for c in df.columns if c.lower() == default][0]
+            return [c for c in columns if c.lower() == default][0]
         except IndexError:
             return None
 
-    if col not in df.columns:
+    if col not in columns:
         raise ValueError(f"The '{col}' column was not found.")
 
     return col

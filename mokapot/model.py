@@ -383,7 +383,7 @@ class PercolatorModel(Model):
         max_iter=10,
         direction=None,
         override=False,
-        n_jobs=-1,
+        n_jobs=1,
     ):
         """Initialize a PercolatorModel"""
         self.n_jobs = n_jobs
