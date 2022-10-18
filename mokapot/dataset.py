@@ -349,6 +349,10 @@ class LinearPsmDataset(PsmDataset):
         original collection of PSMs is not propagated to this object. This uses
         more memory, but is safer since it prevents accidental modification of
         the underlying data.
+    enforce_checks : bool, optional
+        If True, it is checked whether decoys and targets exist and an error is thrown
+        when this is not the case. Per default this check is True, but for prediction
+        for example this can be optionally turned off.
 
     Attributes
     ----------
@@ -379,6 +383,7 @@ class LinearPsmDataset(PsmDataset):
         rt_column=None,
         charge_column=None,
         copy_data=True,
+        enforce_checks=True,
     ):
         """Initialize a PsmDataset object."""
         self._target_column = target_column
@@ -416,12 +421,13 @@ class LinearPsmDataset(PsmDataset):
         num_targets = (self.targets).sum()
         num_decoys = (~self.targets).sum()
 
-        if not num_targets:
-            raise ValueError("No target PSMs were detected.")
-        if not num_decoys:
-            raise ValueError("No decoy PSMs were detected.")
         if not self.data.shape[0]:
             raise ValueError("No PSMs were detected.")
+        elif enforce_checks:
+            if not num_targets:
+                raise ValueError("No target PSMs were detected.")
+            if not num_decoys:
+                raise ValueError("No decoy PSMs were detected.")
 
     def __repr__(self):
         """How to print the class"""
