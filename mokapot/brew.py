@@ -308,7 +308,7 @@ def make_train_sets(psms_info, test_idx, subset_max_train, data_size):
         yield train_idx
 
 
-def _create_psms(psms_info, data):
+def _create_psms(psms_info, data, enforce_decoys=True):
     convert_targets_column(data=data, target_column=psms_info["target_column"])
     return LinearPsmDataset(
         psms=data,
@@ -325,6 +325,7 @@ def _create_psms(psms_info, data):
         rt_column=psms_info["rt_column"],
         charge_column=psms_info["charge_column"],
         copy_data=False,
+        enforce_decoys=enforce_decoys,
     )
 
 
@@ -448,7 +449,7 @@ def _predict(test_idx, psms_info, models, test_fdr):
                 chunk_size=CHUNK_SIZE_READ_ALL_DATA,
             )
             psms_slice = [
-                _create_psms(psms_info, psm_slice) for psm_slice in psms_slice
+                _create_psms(psms_info, psm_slice, enforce_decoys=False) for psm_slice in psms_slice
             ]
             targets = targets + [psm_slice.targets for psm_slice in psms_slice]
             fold_scores = fold_scores + Parallel(

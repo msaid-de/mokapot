@@ -379,6 +379,7 @@ class LinearPsmDataset(PsmDataset):
         rt_column=None,
         charge_column=None,
         copy_data=True,
+        enforce_decoys=True,
     ):
         """Initialize a PsmDataset object."""
         self._target_column = target_column
@@ -418,7 +419,7 @@ class LinearPsmDataset(PsmDataset):
 
         if not num_targets:
             raise ValueError("No target PSMs were detected.")
-        if not num_decoys:
+        if enforce_decoys and not num_decoys:
             raise ValueError("No decoy PSMs were detected.")
         if not self.data.shape[0]:
             raise ValueError("No PSMs were detected.")
