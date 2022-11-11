@@ -195,4 +195,12 @@ def get_parser(config):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        logging.error(f"[Error] {e}")
+        sys.exit(250) # input failure
+    except ValueError as e:
+        logging.error(f"[Error] {e}")
+        sys.exit(250) # input failure
+
