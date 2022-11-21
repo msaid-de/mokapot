@@ -469,7 +469,7 @@ def _predict(test_idx, psms_info, models, test_fdr):
                 )
             )
         except AttributeError:
-            scores.append(np.hstack)
+            scores.append(np.hstack(fold_scores))
         except RuntimeError:
             raise RuntimeError(
                 "Failed to calibrate scores between cross-validation folds, "
