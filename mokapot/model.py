@@ -123,6 +123,9 @@ class Model:
         self.estimator = clone(estimator)
         self.features = None
         self.is_trained = False
+        self.feat_pass = None
+        self.best_feat = None
+        self.desc = None
 
         if scaler == "as-is":
             self.scaler = DummyScaler()
@@ -247,7 +250,9 @@ class Model:
             )
 
         # Choose the initial direction
-        start_labels, feat_pass = _get_starting_labels(psms, self)
+        start_labels, feat_pass, best_feat, desc = _get_starting_labels(
+            psms, self
+        )
 
         # Normalize Features
         self.features = psms.features.columns.tolist()
@@ -305,6 +310,9 @@ class Model:
                 LOGGER.info("    %s", line)
 
         self.is_trained = True
+        self.feat_pass = feat_pass
+        self.best_feat = best_feat
+        self.desc = desc
         LOGGER.info("Done training.")
         return self
 
@@ -517,7 +525,7 @@ def _get_starting_labels(psms, model):
     LOGGER.info("Finding initial direction...")
     if model.direction is None and not model.is_trained:
         feat_res = psms._find_best_feature(model.train_fdr)
-        best_feat, feat_pass, start_labels, _ = feat_res
+        best_feat, feat_pass, start_labels, desc = feat_res
         LOGGER.info(
             "\t- Selected feature %s with %i PSMs at q<=%g.",
             best_feat,
@@ -533,6 +541,8 @@ def _get_starting_labels(psms, model):
 
         start_labels = psms._update_labels(scores, eval_fdr=model.train_fdr)
         feat_pass = (start_labels == 1).sum()
+        best_feat = model.best_feat
+        desc = model.desc
         LOGGER.info(
             "\t- The pretrained model found %i PSMs at q<=%g.",
             feat_pass,
@@ -543,15 +553,18 @@ def _get_starting_labels(psms, model):
         feat = psms.features[model.direction].values
         desc_labels = psms._update_labels(feat, model.train_fdr, desc=True)
         asc_labels = psms._update_labels(feat, model.train_fdr, desc=False)
+        best_feat = feat
 
         desc_pass = (desc_labels == 1).sum()
         asc_pass = (asc_labels == 1).sum()
         if desc_pass >= asc_pass:
             start_labels = desc_labels
             feat_pass = desc_pass
+            desc = True
         else:
             start_labels = asc_labels
             feat_pass = asc_pass
+            desc = False
 
         LOGGER.info(
             "  - Selected feature %s with %i PSMs at q<=%g.",
@@ -566,7 +579,7 @@ def _get_starting_labels(psms, model):
             "Consider changing it to a higher value."
         )
 
-    return start_labels, feat_pass
+    return start_labels, feat_pass, best_feat, desc
 
 
 def _find_hyperparameters(model, features, labels):

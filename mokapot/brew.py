@@ -3,6 +3,7 @@ Defines a function to run the Percolator algorithm.
 """
 import logging
 import copy
+from operator import itemgetter
 
 import pandas as pd
 import numpy as np
@@ -172,8 +173,10 @@ def brew(
     # Find which is best: the learned model, the best feature, or
     # a pretrained model.
     if type(model) is not list and not model.override:
-        best_feats = [find_best_feature(p, test_fdr) for p in [psms_info]]
-        feat_total = sum([best_feat[1] for best_feat in best_feats])
+        best_feats = [[m.best_feat, m.feat_pass, m.desc] for m in models]
+        best_feat_idx, feat_total = max(
+            enumerate(map(itemgetter(1), best_feats)), key=itemgetter(1)
+        )
     else:
         feat_total = 0
 
@@ -187,7 +190,8 @@ def brew(
         using_best_feat = True
         scores = []
         descs = []
-        for dat, (feat, _, _, desc) in zip(psms_info["file"], best_feats):
+        feat, _, desc = best_feats[best_feat_idx]
+        for dat in psms_info["file"]:
             df = pd.read_csv(
                 dat,
                 sep="\t",
@@ -449,7 +453,8 @@ def _predict(test_idx, psms_info, models, test_fdr):
                 chunk_size=CHUNK_SIZE_READ_ALL_DATA,
             )
             psms_slice = [
-                _create_psms(psms_info, psm_slice, enforce_checks=False) for psm_slice in psms_slice
+                _create_psms(psms_info, psm_slice, enforce_checks=False)
+                for psm_slice in psms_slice
             ]
             targets = targets + [psm_slice.targets for psm_slice in psms_slice]
             fold_scores = fold_scores + Parallel(
