@@ -19,10 +19,10 @@ from .dataset import (
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
 
 LOGGER = logging.getLogger(__name__)
-CHUNK_SIZE_READ_ALL_DATA = 1500000
+CHUNK_SIZE_READ_ALL_DATA = 1000000
 CHUNK_SIZE_UPDATE_LABELS_COLUMNS = 2
-CHUNK_SIZE_ROWS_PREDICTION = 2500000
-CHUNK_SIZE_THREAD_PREDICTION = 312500
+CHUNK_SIZE_ROWS_PREDICTION = 1500000
+CHUNK_SIZE_THREAD_PREDICTION = 212500
 
 
 # Functions -------------------------------------------------------------------
@@ -112,9 +112,10 @@ def brew(
         ignore_index=True,
     ).apply(pd.to_numeric, errors="ignore")
     df_spectra = convert_targets_column(df_spectra, target_column)
-    if len(df_spectra) > 1:
+    data_size = len(df_spectra)
+    if data_size > 1:
         LOGGER.info("")
-        LOGGER.info("Found %i total PSMs.", len(df_spectra))
+        LOGGER.info("Found %i total PSMs.", data_size)
         num_targets = (df_spectra[target_column]).sum()
         num_decoys = (~df_spectra[target_column]).sum()
         LOGGER.info(
@@ -125,19 +126,18 @@ def brew(
     # once we check all the datasets have the same features we can use only one metedata information
     psms_info[0]["file"] = [psm["file"] for psm in psms_info]
     psms_info = psms_info[0]
+    df_spectra = df_spectra[spectrum_columns]
     LOGGER.info("Splitting PSMs into %i folds...", folds)
-    test_idx = [_split(df_spectra[spectrum_columns], folds)]
+    test_idx = _split(df_spectra, folds)
+    del df_spectra
     train_sets = make_train_sets(
-        psms_info=psms_info,
         test_idx=test_idx,
         subset_max_train=subset_max_train,
-        data_size=len(df_spectra),
+        data_size=data_size,
     )
-
     if max_workers != 1:
         # train_sets can't be a generator for joblib :(
         train_sets = list(train_sets)
-
     train_psms = parse_in_chunks(
         psms_info=psms_info,
         idx=train_sets,
@@ -166,7 +166,7 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        scores = [_predict(p, psms_info, models, test_fdr) for p in test_idx]
+        scores = [_predict(test_idx, psms_info, models, test_fdr)]
     else:
         # If model training has failed
         scores = [np.zeros(len(p.data)) for p in psms_info]
@@ -269,7 +269,7 @@ def _split(data, folds):
     return tuple(utils.flatten(s) for s in splits)
 
 
-def make_train_sets(psms_info, test_idx, subset_max_train, data_size):
+def make_train_sets(test_idx, subset_max_train, data_size):
     """
     Parameters
     ----------
@@ -285,30 +285,33 @@ def make_train_sets(psms_info, test_idx, subset_max_train, data_size):
     PsmDataset
         The training set.
     """
-    all_idx = [set(range(data_size))]
-    for idx in zip(*test_idx):
+    chunk_range = 5000000
+    for idx in test_idx:
+        k = 0
         train_idx = []
-        for i, j, dset in zip(idx, all_idx, psms_info["file"]):
-            train_idx = list(j - set(i))
-            if subset_max_train is not None:
-                if subset_max_train > len(train_idx):
-                    LOGGER.warning(
-                        "The provided subset value (%i) is larger than the number "
-                        "of psms in the training split (%i), so it will be "
-                        "ignored.",
-                        subset_max_train,
-                        len(train_idx),
-                    )
-                else:
-                    LOGGER.info(
-                        "Subsetting PSMs (%i) to (%i).",
-                        len(train_idx),
-                        subset_max_train,
-                    )
-                    train_idx = np.random.choice(
-                        train_idx, subset_max_train, replace=False
-                    )
-
+        while k + chunk_range < data_size:
+            train_idx += list(set(range(k, k + chunk_range)) - set(idx))
+            k += chunk_range
+        train_idx += list(set(range(k, data_size)) - set(idx))
+        train_idx_size = len(train_idx)
+        if subset_max_train is not None:
+            if subset_max_train > train_idx_size:
+                LOGGER.warning(
+                    "The provided subset value (%i) is larger than the number "
+                    "of psms in the training split (%i), so it will be "
+                    "ignored.",
+                    subset_max_train,
+                    train_idx_size,
+                )
+            else:
+                LOGGER.info(
+                    "Subsetting PSMs (%i) to (%i).",
+                    train_idx_size,
+                    subset_max_train,
+                )
+            train_idx = np.random.choice(
+                train_idx, subset_max_train, replace=False
+            )
         yield train_idx
 
 
@@ -443,6 +446,7 @@ def _predict(test_idx, psms_info, models, test_fdr):
         )
         fold_scores = []
         targets = []
+        del fold_idx
         for index_slice in index_slices:
             pred_slices = utils.create_chunks(
                 data=index_slice, chunk_size=CHUNK_SIZE_THREAD_PREDICTION
@@ -452,15 +456,16 @@ def _predict(test_idx, psms_info, models, test_fdr):
                 idx=pred_slices,
                 chunk_size=CHUNK_SIZE_READ_ALL_DATA,
             )
+            del pred_slices
             psms_slice = [
                 _create_psms(psms_info, psm_slice, enforce_checks=False)
                 for psm_slice in psms_slice
             ]
             targets = targets + [psm_slice.targets for psm_slice in psms_slice]
-            fold_scores = fold_scores + Parallel(
-                n_jobs=-1, require="sharedmem"
-            )(delayed(mod.predict)(psms=p) for p in psms_slice)
-
+            fold_scores += Parallel(n_jobs=-1, require="sharedmem")(
+                delayed(mod.predict)(psms=p) for p in psms_slice
+            )
+            del psms_slice
         try:
             mod.estimator.decision_function
             scores.append(
@@ -476,8 +481,11 @@ def _predict(test_idx, psms_info, models, test_fdr):
                 "because no target PSMs could be found below 'test_fdr'. Try "
                 "raising 'test_fdr'."
             )
-
+        del index_slices
+        del targets
+        del fold_scores
     rev_idx = np.argsort(sum(test_idx, [])).tolist()
+    del test_idx
     return np.concatenate(scores)[rev_idx]
 
 
