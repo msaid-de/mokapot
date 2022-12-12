@@ -6,6 +6,7 @@ import numpy as np
 import numba as nb
 
 BUFFER_SIZE = 400000
+SEP = ","
 
 
 def tdc(scores, target, desc=True):
@@ -239,9 +240,9 @@ def tdc_ondisk(
 def fdr_ondisk(iterable_sorted, out_path):
     cum_targets = 0
     cum_decoys = 0
-    new_row = []
+    batch = []
     for row_idx, row in enumerate(iterable_sorted):
-        row = [float(val) for val in row.split(",")]
+        row = [float(val) for val in row.split(SEP)]
         index = int(float(row[0]))
         score = float(row[1])
         label = int(float(row[2]))
@@ -260,16 +261,16 @@ def fdr_ondisk(iterable_sorted, out_path):
             where=(cum_targets != 0),
         )
 
-        new_row.append(np.array([index, score, label, fdr]))
-        if len(new_row) > BUFFER_SIZE:
+        batch.append(np.array([index, score, label, fdr]))
+        if len(batch) > BUFFER_SIZE:
             with open(out_path, "ab") as fp:
-                np.savetxt(fp, new_row, delimiter=",")
-            new_row = []
+                np.savetxt(fp, batch, delimiter=SEP)
+            batch = []
 
-    if len(new_row) > 0:
+    if len(batch) > 0:
         with open(out_path, "ab") as fp:
-            np.savetxt(fp, new_row, delimiter=",")
-    del new_row
+            np.savetxt(fp, batch, delimiter=SEP)
+    del batch
     return out_path
 
 
@@ -284,10 +285,10 @@ def qvals_ondisk(
     batch = []
     for line_idx, line in enumerate(reversed(list(open(file_path)))):
         line = [
-            float(line.split(",")[0]),
-            float(line.split(",")[1]),
-            int(float(line.split(",")[2])),
-            float(line.split(",")[3]),
+            float(line.split(SEP)[0]),
+            float(line.split(SEP)[1]),
+            int(float(line.split(SEP)[2])),
+            float(line.split(SEP)[3]),
         ]
         curr_score = line[1]
         curr_fdr = line[3]
@@ -305,12 +306,12 @@ def qvals_ondisk(
             group_fdr = []
         if len(batch) > BUFFER_SIZE:
             with open(out_file, "ab") as f:
-                np.savetxt(f, batch, delimiter=",")
+                np.savetxt(f, batch, delimiter=SEP)
             batch = []
         prev_score = curr_score
 
     if len(batch) > 0:
         with open(out_file, "ab") as f:
-            np.savetxt(f, batch, delimiter=",")
+            np.savetxt(f, batch, delimiter=SEP)
     del batch
     os.remove(file_path)
