@@ -543,11 +543,11 @@ def _assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
         ignore_index=True,
     )
 
-    data = _create_psms(
-        psms_info=psms_info, data=data.apply(pd.to_numeric, errors="ignore")
-    )
+    data = data.apply(pd.to_numeric, errors="ignore")
+    convert_targets_column(data=data, target_column=psms_info["target_column"])
     return assign_confidence(
         psms=data,
+        psms_info=psms_info,
         scores=scores,
         eval_fdr=eval_fdr,
         desc=desc,

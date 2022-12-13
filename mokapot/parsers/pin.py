@@ -19,6 +19,7 @@ CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS = 4500000
 # Functions -------------------------------------------------------------------
 def read_pin(
     pin_files,
+    has_proteins=None,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -100,6 +101,7 @@ def read_pin(
     return [
         read_percolator(
             file,
+            has_proteins=has_proteins,
             group_column=group_column,
             filename_column=filename_column,
             calcmass_column=calcmass_column,
@@ -114,6 +116,7 @@ def read_pin(
 
 def read_percolator(
     perc_file,
+    has_proteins=None,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -228,6 +231,7 @@ def read_percolator(
         "expmass_column": expmass,
         "rt_column": ret_time,
         "charge_column": charge,
+        "has_proteins": has_proteins,
     }
 
 

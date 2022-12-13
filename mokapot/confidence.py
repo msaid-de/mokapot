@@ -197,15 +197,12 @@ class Confidence:
         "peptide_pairs": "Peptide Pairs",
     }
 
-    def __init__(self, psms, scores, desc):
+    def __init__(self, psms, psms_info, scores, desc):
         """Initialize a PsmConfidence object."""
-        self._data = psms.metadata
-        self._score_column = _new_column("score", self._data)
-        self._has_proteins = psms.has_proteins
-        if psms.has_proteins:
-            self._proteins = psms._proteins
-        else:
-            self._proteins = None
+
+        self._data = psms
+        self._score_column = _new_column("score", psms)
+        self._has_proteins = psms_info["has_proteins"]
 
         # Flip sign of scores if not descending
         self._data[self._score_column] = scores * (desc * 2 - 1)
@@ -259,7 +256,7 @@ class Confidence:
             decoys=decoys,
         )
 
-    def _perform_tdc(self, psm_columns):
+    def _perform_tdc(self, psms, psm_columns):
         """Perform target-decoy competition.
 
         Parameters
@@ -267,10 +264,8 @@ class Confidence:
         psm_columns : str or list of str
             The columns that define a PSM.
         """
-        psm_idx = utils.groupby_max(
-            self._data, psm_columns, self._score_column
-        )
-        self._data = self._data.loc[psm_idx, :]
+        psm_idx = utils.groupby_max(psms, psm_columns, self._score_column)
+        return psms.loc[psm_idx, :]
 
     def plot_qvalues(self, level="psms", threshold=0.1, ax=None, **kwargs):
         """Plot the cumulative number of discoveries over range of q-values.
@@ -340,15 +335,16 @@ class LinearConfidence(Confidence):
         A dictionary of confidence estimates for the decoys at each level.
     """
 
-    def __init__(self, psms, scores, desc=True, eval_fdr=0.01):
+    def __init__(self, psms, psms_info, scores, desc=True, eval_fdr=0.01):
         """Initialize a a LinearPsmConfidence object"""
-        super().__init__(psms, scores, desc)
-        self._target_column = _new_column("target", self._data)
-        self._data[self._target_column] = psms.targets
-        self._psm_columns = psms._spectrum_columns
-        self._peptide_column = psms._peptide_column
-        self._protein_column = psms._protein_column
-        self._optional_columns = psms._optional_columns
+        super().__init__(psms, psms_info, scores, desc)
+        self._target_column = _new_column("target", psms)
+        psms = psms.rename(
+            columns={psms_info["target_column"]: self._target_column}
+        )
+        self._psm_columns = psms_info["spectrum_columns"]
+        self._peptide_column = psms_info["peptide_column"]
+        self._protein_column = psms_info["protein_column"]
         self._eval_fdr = eval_fdr
 
         LOGGER.info("Performing target-decoy competition...")
@@ -357,10 +353,10 @@ class LinearConfidence(Confidence):
             "+".join(self._psm_columns),
         )
 
-        self._perform_tdc(self._psm_columns)
+        psms = self._perform_tdc(psms, self._psm_columns)
         LOGGER.info("\t- Found %i PSMs from unique spectra.", len(self._data))
 
-        self._assign_confidence(desc=desc)
+        self._assign_confidence(psms, desc=desc)
 
         self.accepted = {}
         for level in self.levels:
@@ -391,7 +387,7 @@ class LinearConfidence(Confidence):
         else:
             return None
 
-    def _assign_confidence(self, desc=True):
+    def _assign_confidence(self, psms, desc=True):
         """
         Assign confidence to PSMs and peptides.
 
@@ -402,13 +398,13 @@ class LinearConfidence(Confidence):
         """
         levels = ["PSMs", "peptides"]
         peptide_idx = utils.groupby_max(
-            self._data, self._peptide_column, self._score_column
+            psms, self._peptide_column, self._score_column
         )
 
-        peptides = self._data.loc[peptide_idx]
+        peptides = psms.loc[peptide_idx]
         LOGGER.info("\t- Found %i unique peptides.", len(peptides))
 
-        level_data = [self._data, peptides]
+        level_data = [psms, peptides]
 
         if self._has_proteins:
             proteins = picked_protein(

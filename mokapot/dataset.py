@@ -707,10 +707,12 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     return (scores - target_score) / (target_score - decoy_score)
 
 
-def assign_confidence(psms, scores, eval_fdr, desc):
-    if psms._group_column is None:
+def assign_confidence(psms, psms_info, scores, eval_fdr, desc):
+    if psms_info["group_column"] is None:
         LOGGER.info("Assigning confidence...")
-        return LinearConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)
+        return LinearConfidence(
+            psms, psms_info, scores, eval_fdr=eval_fdr, desc=desc
+        )
     else:
         LOGGER.info("Assigning confidence within groups...")
         return GroupedConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)
