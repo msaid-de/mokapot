@@ -26,11 +26,6 @@ from . import qvalues
 from . import utils
 from .parsers.fasta import read_fasta
 from .proteins import Proteins
-from .confidence import (
-    LinearConfidence,
-    CrossLinkedConfidence,
-    GroupedConfidence,
-)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,20 +42,6 @@ class PsmDataset(ABC):
     @abstractmethod
     def targets(self):
         """An array indicating whether each PSM is a target."""
-        return
-
-    @abstractmethod
-    def _assign_confidence(self, scores, desc):
-        """
-        Return how to assign confidence.
-
-        Parameters
-        ----------
-        scores : numpy.ndarray
-            An array of scores.
-        desc : bool
-            Are higher scores better?
-        """
         return
 
     @abstractmethod
@@ -458,47 +439,6 @@ class LinearPsmDataset(PsmDataset):
 
         return update_labels(scores=scores, targets=self.targets, desc=desc)
 
-    def _assign_confidence(self, scores=None, desc=True, eval_fdr=0.01):
-        """Assign confidence to PSMs peptides, and optionally, proteins.
-
-        Two forms of confidence estimates are calculated: q-values---the
-        minimum false discovery rate (FDR) at which a given PSM would be
-        accepted---and posterior error probabilities (PEPs)---the probability
-        that a given PSM is incorrect. For more information see the
-        :doc:`Confidence Estimation <confidence>` page.
-
-        Parameters
-        ----------
-        scores : numpy.ndarray
-            The scores by which to rank the PSMs. The default, :code:`None`,
-            uses the feature that accepts the most PSMs at an FDR threshold of
-            `eval_fdr`.
-        desc : bool
-            Are higher scores better?
-        eval_fdr : float
-            The FDR threshold at which to report and evaluate performance. If
-            `scores` is not :code:`None`, this parameter has no affect on the
-            analysis itself, but does affect logging messages and the FDR
-            threshold applied for some output formats, such as FlashLFQ.
-
-        Returns
-        -------
-        LinearConfidence
-            A :py:class:`~mokapot.confidence.LinearConfidence` object storing
-            the confidence estimates for the collection of PSMs.
-        """
-        if scores is None:
-            feat, _, _, desc = self._find_best_feature(eval_fdr)
-            LOGGER.info("Selected %s as the best feature.", feat)
-            scores = self.features[feat].values
-
-        return assign_confidence(
-            psms=self,
-            scores=scores,
-            eval_fdr=eval_fdr,
-            desc=desc,
-        )
-
 
 class CrossLinkedPsmDataset(PsmDataset):
     """
@@ -613,31 +553,6 @@ class CrossLinkedPsmDataset(PsmDataset):
         new_labels[unlabeled] = 0
         return new_labels
 
-    def _assign_confidence(self, scores, desc=True):
-        """
-        Assign confidence to crosslinked PSMs and peptides.
-
-        Two forms of confidence estimates are calculated: q-values,
-        which are the minimum false discovery rate at which a given PSMs
-        would be accepted, and posterior error probabilities (PEPs),
-        which probability that the given PSM is incorrect. For more
-        information see the :doc:`PsmConfidence <confidence>` page.
-
-        Parameters
-        ----------
-        scores : numpy.ndarray
-            The scores used to rank the PSMs.
-        desc : bool
-            Are higher scores better?
-
-        Returns
-        -------
-        CrossLinkedPsmConfidence
-            A :py:class:`CrossLinkedPsmConfidence` object storing the
-            confidence for the provided PSMs.
-        """
-        return CrossLinkedConfidence(self, scores, desc)
-
 
 def update_labels(scores, targets, eval_fdr=0.01, desc=True):
     """Return the label for each PSM, given it's score.
@@ -705,14 +620,3 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     decoy_score = np.median(scores[labels == -1])
 
     return (scores - target_score) / (target_score - decoy_score)
-
-
-def assign_confidence(psms, psms_info, scores, eval_fdr, desc):
-    if psms_info["group_column"] is None:
-        LOGGER.info("Assigning confidence...")
-        return LinearConfidence(
-            psms, psms_info, scores, eval_fdr=eval_fdr, desc=desc
-        )
-    else:
-        LOGGER.info("Assigning confidence within groups...")
-        return GroupedConfidence(psms, scores, eval_fdr=eval_fdr, desc=desc)

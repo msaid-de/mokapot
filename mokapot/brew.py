@@ -13,9 +13,9 @@ from . import utils
 from .dataset import (
     LinearPsmDataset,
     calibrate_scores,
-    assign_confidence,
     update_labels,
 )
+from .confidence import assign_confidence
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
 
 LOGGER = logging.getLogger(__name__)
