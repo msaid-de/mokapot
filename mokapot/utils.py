@@ -70,3 +70,23 @@ def sort_file_on_disk(file_path, sort_key, reverse=False):
         write_processes=8,
         reverse=reverse,
     )
+
+
+def get_unique_psms_peptides(iterable, out_psms, out_peptides, sep):
+    seen_psm = set()
+    seen_peptide = set()
+    f_psm = open(out_psms, "a")
+    f_peptide = open(out_peptides, "a")
+    for line in iterable:
+        line_list = line.split(sep)
+        line_hash_psm = tuple([int(line_list[2]), float(line_list[3])])
+        line_hash_peptide = line_list[4]
+        if line_hash_psm not in seen_psm:
+            seen_psm.add(line_hash_psm)
+            f_psm.write(f"{line}\n")
+            if line_hash_peptide not in seen_peptide:
+                seen_peptide.add(line_hash_peptide)
+                f_peptide.write(f"{line}\n")
+    f_psm.close()
+    f_peptide.close()
+    return [len(seen_psm), len(seen_peptide)]
