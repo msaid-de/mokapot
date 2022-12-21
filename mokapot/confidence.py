@@ -409,21 +409,32 @@ class LinearConfidence(Confidence):
             Are higher scores better?
         """
         levels = ["PSMs", "peptides"]
-
+        level_data_path = [psms_path, peptides_path]
         if self._has_proteins:
+            data = read_file(
+                peptides_path, use_cols=self._metadata_column + ["score"]
+            )
+            data = data.apply(pd.to_numeric, errors="ignore")
+            convert_targets_column(
+                data=data, target_column=self._target_column
+            )
             proteins = picked_protein(
-                peptides,
+                data,
                 self._target_column,
                 self._peptide_column,
                 self._score_column,
                 self._proteins,
             )
+            proteins_path = "proteins.csv"
+            proteins.to_csv(proteins_path, index=False, sep="\t")
             levels += ["proteins"]
-            level_data += [proteins]
+            level_data_path += [proteins_path]
             LOGGER.info("\t- Found %i unique protein groups.", len(proteins))
 
-        for level, data_path in zip(levels, [psms_path, peptides_path]):
-            data = read_file(data_path, use_cols=None)
+        for level, data_path in zip(levels, level_data_path):
+            data = read_file(
+                data_path, use_cols=self._metadata_column + ["score"]
+            )
             data = data.apply(pd.to_numeric, errors="ignore")
             convert_targets_column(
                 data=data, target_column=self._target_column
@@ -466,7 +477,6 @@ class LinearConfidence(Confidence):
             data["PEP"] = pep
             if level != "proteins" and self._protein_column is not None:
                 data[self._protein_column] = data.pop(self._protein_column)
-
             self.confidence_estimates[level] = data.loc[targets, :]
             self.decoy_confidence_estimates[level] = data.loc[~targets, :]
 
@@ -652,7 +662,7 @@ def assign_confidence(
     with open(peptides_path, "w") as f_peptide:
         f_peptide.write("\t".join(metadata_columns + ["score", "\n"]))
 
-    unique_psms, unique_peptides = utils.get_unique_psms_peptides(
+    unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
         iterable=iterable_sorted,
         out_psms="psms.csv",
         out_peptides="peptides.csv",

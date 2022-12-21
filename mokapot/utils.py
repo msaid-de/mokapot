@@ -72,7 +72,7 @@ def sort_file_on_disk(file_path, sort_key, sep=",", reverse=False):
     )
 
 
-def get_unique_psms_peptides(iterable, out_psms, out_peptides, sep):
+def get_unique_psms_and_peptides(iterable, out_psms, out_peptides, sep):
     seen_psm = set()
     seen_peptide = set()
     f_psm = open(out_psms, "a")
