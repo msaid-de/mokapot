@@ -25,6 +25,7 @@ import pandas as pd
 from . import qvalues
 from . import utils
 from .parsers.fasta import read_fasta
+from .parsers.pin import read_file
 from .proteins import Proteins
 
 LOGGER = logging.getLogger(__name__)
@@ -437,7 +438,7 @@ class LinearPsmDataset(PsmDataset):
 
     def _update_labels(self, scores, eval_fdr=0.01, desc=True):
 
-        return update_labels(scores=scores, targets=self.targets, desc=desc)
+        return _update_labels(scores=scores, targets=self.targets, desc=desc)
 
 
 class CrossLinkedPsmDataset(PsmDataset):
@@ -554,7 +555,7 @@ class CrossLinkedPsmDataset(PsmDataset):
         return new_labels
 
 
-def update_labels(scores, targets, eval_fdr=0.01, desc=True):
+def _update_labels(scores, targets, eval_fdr=0.01, desc=True):
     """Return the label for each PSM, given it's score.
 
     This method is used during model training to define positive examples,
@@ -609,7 +610,7 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     numpy.ndarray
         An array of calibrated scores.
     """
-    labels = update_labels(scores, targets, eval_fdr, desc)
+    labels = _update_labels(scores, targets, eval_fdr, desc)
     pos = labels == 1
     if not pos.sum():
         raise RuntimeError(
@@ -620,3 +621,88 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     decoy_score = np.median(scores[labels == -1])
 
     return (scores - target_score) / (target_score - decoy_score)
+
+
+def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
+    df = pd.concat(
+        [
+            read_file(
+                file=file, use_cols=columns + [psms_info["target_column"]]
+            )
+            for file in psms_info["file"]
+        ],
+        ignore_index=True,
+    )
+
+    return (
+        df.loc[:, columns].apply(
+            _update_labels,
+            targets=df.loc[:, psms_info["target_column"]],
+            eval_fdr=eval_fdr,
+            desc=desc,
+        )
+        == 1
+    ).sum()
+
+
+def find_best_feature(psms_info, eval_fdr):
+    best_feat = None
+    best_positives = 0
+    new_labels = None
+
+    for desc in (True, False):
+        labs = [
+            targets_count_by_feature(
+                psms_info=psms_info,
+                eval_fdr=eval_fdr,
+                columns=list(c),
+                desc=desc,
+            )
+            for c in psms_info["feature_columns"]
+        ]
+
+        num_passing = pd.concat(labs)
+        feat_idx = num_passing.idxmax()
+        num_passing = num_passing[feat_idx]
+
+        if num_passing > best_positives:
+            best_positives = num_passing
+            best_feat = feat_idx
+            df = pd.concat(
+                [
+                    read_file(
+                        file=file,
+                        use_cols=[best_feat, psms_info["target_column"]],
+                    )
+                    for file in psms_info["file"]
+                ],
+                ignore_index=True,
+            )
+            new_labels = _update_labels(
+                scores=df.loc[:, best_feat],
+                targets=df[psms_info["target_column"]],
+                eval_fdr=eval_fdr,
+                desc=desc,
+            )
+            best_desc = desc
+
+    if best_feat is None:
+        raise RuntimeError("No PSMs found below the 'eval_fdr'.")
+
+    return best_feat, best_positives, new_labels, best_desc
+
+
+def update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
+    df = pd.concat(
+        [
+            read_file(file=file, use_cols=[psms_info["target_column"]])
+            for file in psms_info["file"]
+        ],
+        ignore_index=True,
+    )
+    return _update_labels(
+        scores=scores,
+        targets=df[psms_info["target_column"]],
+        eval_fdr=eval_fdr,
+        desc=desc,
+    )

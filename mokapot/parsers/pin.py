@@ -8,8 +8,6 @@ import pandas as pd
 from joblib import Parallel, delayed
 
 from .. import utils
-from ..dataset import LinearPsmDataset
-
 
 LOGGER = logging.getLogger(__name__)
 CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS = 19
@@ -224,6 +222,7 @@ def read_percolator(
         "protein_column": proteins[0],
         "group_column": group_column,
         "feature_columns": _feature_columns,
+        "metadata_columns": nonfeat,
         "filename_column": filename,
         "scan_column": scan,
         "specId_column": specid[0],

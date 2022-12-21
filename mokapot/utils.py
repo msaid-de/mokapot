@@ -63,10 +63,10 @@ def create_chunks(data, chunk_size):
     return [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
 
 
-def sort_file_on_disk(file_path, sort_key, reverse=False):
+def sort_file_on_disk(file_path, sort_key, sep=",", reverse=False):
     return sorted_in_disk(
         read_iter_from_file(file_path),
-        key=lambda row: float(row.split(",")[sort_key]),
+        key=lambda row: float(row.split(sep)[sort_key]),
         write_processes=8,
         reverse=reverse,
     )
