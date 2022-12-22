@@ -43,10 +43,8 @@ class GroupedConfidence:
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+    psms_info : Dict
+        Dict contain information about percolator input.
     scores : np.ndarray
         A vector containing the score of each PSM.
     desc : bool
@@ -319,12 +317,12 @@ class LinearConfidence(Confidence):
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    scores : np.ndarray
-        A vector containing the score of each PSM.
+    psms_info : Dict
+        Dict contain information about percolator input.
+    psms_path : Path
+            File with unique psms.
+    peptides_path : Path
+            File with unique peptides.
     desc : bool
         Are higher scores better?
     eval_fdr : float
@@ -334,12 +332,6 @@ class LinearConfidence(Confidence):
     Attributes
     ----------
     levels : list of str
-    psms : pandas.DataFrame
-        Confidence estimates for PSMs in the dataset.
-    peptides : pandas.DataFrame
-        Confidence estimates for peptides in the dataset.
-    proteins : pandas.DataFrame or None
-        Confidence estimates for proteins in the dataset.
     confidence_estimates : Dict[str, pandas.DataFrame]
         A dictionary of confidence estimates at each level.
     decoy_confidence_estimates : Dict[str, pandas.DataFrame]
@@ -405,8 +397,10 @@ class LinearConfidence(Confidence):
 
         Parameters
         ----------
-        psms : Dataframe
-            Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+        psms_path : Path
+            File with unique psms.
+        peptides_path : Path
+            File with unique peptides.
         desc : bool
             Are higher scores better?
         """
@@ -524,12 +518,12 @@ class CrossLinkedConfidence(Confidence):
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    scores : np.ndarray
-        A vector containing the score of each PSM.
+    psms_path : Path
+            File with unique psms.
+    peptides_path : Path
+            File with unique peptides.
+    psms_info : Dict
+        Dict contain information about percolator input.
     desc : bool
         Are higher scores better?
 
@@ -564,8 +558,10 @@ class CrossLinkedConfidence(Confidence):
 
         Parameters
         ----------
-        psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+        psms_path : Path
+            File with unique psms.
+        peptides_path : Path
+            File with unique peptides.
         desc : bool
             Are higher scores better?
         """
