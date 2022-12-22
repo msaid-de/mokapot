@@ -259,7 +259,7 @@ def open_file(file):
         return open(file)
 
 
-def read_file(file, use_cols):
+def read_file(file, use_cols=None):
     with open_file(file) as f:
         return pd.read_csv(
             f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"

@@ -61,8 +61,9 @@ class GroupedConfidence:
     group_confidence_estimates: Dict
     """
 
-    def __init__(self, psms, psms_info, scores, desc=True, eval_fdr=0.01):
+    def __init__(self, psms_info, scores, desc=True, eval_fdr=0.01):
         """Initialize a GroupedConfidence object"""
+        psms = read_file(psms_info["file"][0])
         self.group_column = psms_info["group_column"]
         psms_info["group_column"] = None
         scores = scores * (desc * 2 - 1)
@@ -79,13 +80,14 @@ class GroupedConfidence:
         )
 
         self._group_confidence_estimates = {}
-        for group, group_df in psms.groupby(psms_info["group_column"]):
+        for group, group_df in psms.groupby(self.group_column):
             LOGGER.info("Group: %s == %s", self.group_column, group)
             tdc_winners = group_df.index.intersection(idx)
             group_psms = group_df.loc[tdc_winners, :]
             group_scores = scores.loc[group_psms.index].values + 1
+            psms_info["file"] = ["group_psms.csv"]
+            group_psms.to_csv(psms_info["file"][0], sep="\t", index=False)
             res = assign_confidence(
-                group_psms,
                 psms_info,
                 group_scores * (2 * desc - 1),
                 desc=desc,
@@ -633,46 +635,50 @@ def assign_confidence(
             ignore_index=True,
         ).values
 
-    reader = read_file_in_chunks(
-        file=psms_info["file"][0],
-        chunk_size=_CHUNK_SIZE,
-        use_cols=psms_info["metadata_columns"],
-    )
-    scores_slices = utils.create_chunks(scores, chunk_size=_CHUNK_SIZE)
-    scores_metadata_path = "scores_metadata.csv"
-    for chunk_metadata, score_chunk in zip(reader, scores_slices):
-        chunk_metadata["score"] = score_chunk
-        chunk_metadata.to_csv(
-            "scores_metadata.csv", sep="\t", index=False, mode="a", header=None
-        )
-        metadata_columns = list(chunk_metadata.columns)
-    psms_path = "psms.csv"
-    peptides_path = "peptides.csv"
-    iterable_sorted = utils.sort_file_on_disk(
-        file_path=scores_metadata_path, sort_key=-1, sep="\t", reverse=True
-    )
-    LOGGER.info("Assigning confidence...")
-    LOGGER.info("Performing target-decoy competition...")
-    LOGGER.info(
-        "Keeping the best match per %s columns...",
-        "+".join(psms_info["spectrum_columns"]),
-    )
-    with open(psms_path, "w") as f_psm:
-        f_psm.write("\t".join(metadata_columns + ["score", "\n"]))
-    with open(peptides_path, "w") as f_peptide:
-        f_peptide.write("\t".join(metadata_columns + ["score", "\n"]))
-
-    unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
-        iterable=iterable_sorted,
-        out_psms="psms.csv",
-        out_peptides="peptides.csv",
-        sep="\t",
-    )
-    os.remove(scores_metadata_path)
-    LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
-    LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
-
     if psms_info["group_column"] is None:
+        reader = read_file_in_chunks(
+            file=psms_info["file"][0],
+            chunk_size=_CHUNK_SIZE,
+            use_cols=psms_info["metadata_columns"],
+        )
+        scores_slices = utils.create_chunks(scores, chunk_size=_CHUNK_SIZE)
+        scores_metadata_path = "scores_metadata.csv"
+        for chunk_metadata, score_chunk in zip(reader, scores_slices):
+            chunk_metadata["score"] = score_chunk
+            chunk_metadata.to_csv(
+                "scores_metadata.csv",
+                sep="\t",
+                index=False,
+                mode="a",
+                header=None,
+            )
+            metadata_columns = list(chunk_metadata.columns)
+        psms_path = "psms.csv"
+        peptides_path = "peptides.csv"
+        iterable_sorted = utils.sort_file_on_disk(
+            file_path=scores_metadata_path, sort_key=-1, sep="\t", reverse=True
+        )
+        LOGGER.info("Assigning confidence...")
+        LOGGER.info("Performing target-decoy competition...")
+        LOGGER.info(
+            "Keeping the best match per %s columns...",
+            "+".join(psms_info["spectrum_columns"]),
+        )
+        with open(psms_path, "w") as f_psm:
+            f_psm.write("\t".join(metadata_columns + ["score", "\n"]))
+        with open(peptides_path, "w") as f_peptide:
+            f_peptide.write("\t".join(metadata_columns + ["score", "\n"]))
+
+        unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
+            iterable=iterable_sorted,
+            out_psms="psms.csv",
+            out_peptides="peptides.csv",
+            sep="\t",
+        )
+        os.remove(scores_metadata_path)
+        LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
+        LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
+
         return LinearConfidence(
             psms_info=psms_info,
             psms_path=psms_path,
@@ -683,7 +689,7 @@ def assign_confidence(
     else:
         LOGGER.info("Assigning confidence within groups...")
         return GroupedConfidence(
-            psms, psms_info, scores, eval_fdr=eval_fdr, desc=desc
+            psms_info, scores, eval_fdr=eval_fdr, desc=desc
         )
 
 
