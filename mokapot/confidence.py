@@ -543,17 +543,22 @@ class CrossLinkedConfidence(Confidence):
     :meta private:
     """
 
-    def __init__(self, psms, psms_info, scores, desc=True):
+    def __init__(
+        self,
+        psms_info,
+        psms_path,
+        peptides_path,
+        desc=True,
+    ):
         """Initialize a CrossLinkedConfidence object"""
-        super().__init__(psms, psms_info, scores, desc)
+        super().__init__(psms_info)
         self._target_column = psms_info["target_column"]
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
 
-        psms = self._perform_tdc(psms, self._psm_columns)
-        self._assign_confidence(psms, desc=desc)
+        self._assign_confidence(psms_path, peptides_path, desc=desc)
 
-    def _assign_confidence(self, psms, desc=True):
+    def _assign_confidence(self, psms_path, peptides_path, desc=True):
         """
         Assign confidence to PSMs and peptides.
 
@@ -564,14 +569,17 @@ class CrossLinkedConfidence(Confidence):
         desc : bool
             Are higher scores better?
         """
-        peptide_idx = utils.groupby_max(
-            psms, self._peptide_columns, self._score_column
-        )
 
-        peptides = psms.loc[peptide_idx]
         levels = ("csms", "peptide_pairs")
 
-        for level, data in zip(levels, (psms, peptides)):
+        for level, data_path in zip(levels, [psms_path, peptides_path]):
+            data = read_file(
+                data_path, use_cols=self._metadata_column + ["score"]
+            )
+            data = data.apply(pd.to_numeric, errors="ignore")
+            convert_targets_column(
+                data=data, target_column=self._target_column
+            )
             scores = data.loc[:, self._score_column].values
             targets = data.loc[:, self._target_column].astype(bool).values
             data["mokapot q-value"] = qvalues.crosslink_tdc(
