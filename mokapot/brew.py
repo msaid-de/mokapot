@@ -305,9 +305,9 @@ def make_train_sets(test_idx, subset_max_train, data_size):
                     train_idx_size,
                     subset_max_train,
                 )
-            train_idx = np.random.choice(
-                train_idx, subset_max_train, replace=False
-            )
+                train_idx = np.random.choice(
+                    train_idx, subset_max_train, replace=False
+                )
         yield train_idx
 
 
