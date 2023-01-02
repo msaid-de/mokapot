@@ -199,13 +199,23 @@ class Confidence:
         "peptide_pairs": "Peptide Pairs",
     }
 
-    def __init__(self, psms_info):
+    def __init__(self, psms_info, dest_dir=None, file_root=None, decoys=False):
         """Initialize a PsmConfidence object."""
         self._score_column = "score"
         self._target_column = psms_info["target_column"]
         self._protein_column = psms_info["protein_column"]
         self._metadata_column = psms_info["metadata_columns"]
         self._has_proteins = psms_info["has_proteins"]
+
+        self.decoys = decoys
+
+        self.scores = None
+        self.targets = None
+        self.qvals = None
+        self.peps = None
+
+        self.dest_dir = dest_dir
+        self.file_root = file_root
 
         if self._has_proteins:
             self._proteins = self._has_proteins
@@ -228,9 +238,8 @@ class Confidence:
         """
         return list(self.confidence_estimates.keys())
 
-    def to_txt(self, dest_dir=None, file_root=None, sep="\t", decoys=False):
+    def to_txt(self, data_path, level):
         """Save confidence estimates to delimited text files.
-
         Parameters
         ----------
         dest_dir : str or None, optional
@@ -252,13 +261,53 @@ class Confidence:
             The paths to the saved files.
 
         """
-        return to_txt(
-            self,
-            dest_dir=dest_dir,
-            file_root=file_root,
-            sep=sep,
-            decoys=decoys,
+        reader = read_file_in_chunks(
+            file=data_path,
+            chunk_size=_CHUNK_SIZE,
+            use_cols=["SpecId", "ScanNr", "ExpMass", "Peptide", "Proteins"],
         )
+        self.scores, self.qvals, self.peps, self.targets = [
+            utils.create_chunks(val, chunk_size=_CHUNK_SIZE)
+            for val in [self.scores, self.qvals, self.peps, self.targets]
+        ]
+        output_columns = "\t".join(
+            [
+                "SpecId",
+                "ScanNr",
+                "ExpMass",
+                "Peptide",
+                "mokapot score",
+                "mokapot q-value",
+                "mokapot PEP",
+                "Proteins",
+                "\n",
+            ]
+        )
+        outfile_t = f"targets.{10}.txt"
+        outfile_d = f"decoys.{level}.txt"
+        with open(outfile_t, "w") as fp:
+            fp.write(output_columns)
+        with open(outfile_d, "w") as fp:
+            fp.write(output_columns)
+
+        for data_in, score_in, qvals_in, pep_in, target_in in zip(
+            reader, self.scores, self.qvals, self.peps, self.targets
+        ):
+            data_in = data_in.apply(pd.to_numeric, errors="ignore")
+            data_in["score"] = score_in
+            data_in["qvals"] = qvals_in
+            data_in["PEP"] = pep_in
+            if level != "proteins" and self._protein_column is not None:
+                data_in[self._protein_column] = data_in.pop(
+                    self._protein_column
+                )
+            data_in.loc[target_in, :].to_csv(
+                outfile_t, sep="\t", index=False, mode="a", header=None
+            )
+            data_in.loc[~target_in, :].to_csv(
+                outfile_d, sep="\t", index=False, mode="a", header=None
+            )
+        os.remove(data_path)
 
     def _perform_tdc(self, psms, psm_columns):
         """Perform target-decoy competition.
@@ -434,9 +483,9 @@ class LinearConfidence(Confidence):
             convert_targets_column(
                 data=data, target_column=self._target_column
             )
-            scores = data.loc[:, self._score_column].values
-            targets = data.loc[:, self._target_column].astype(bool).values
-            if all(targets):
+            self.scores = data.loc[:, self._score_column].values
+            self.targets = data.loc[:, self._target_column].astype(bool).values
+            if all(self.targets):
                 LOGGER.warning(
                     "No decoy PSMs remain for confidence estimation. "
                     "Confidence estimates may be unreliable."
@@ -444,14 +493,14 @@ class LinearConfidence(Confidence):
 
             # Estimate q-values and assign to dataframe
             LOGGER.info("Assiging q-values to %s...", level)
-            data["q-value"] = qvalues.tdc(scores, targets, desc=True)
+            self.qvals = qvalues.tdc(self.scores, self.targets, desc=True)
 
             # Set scores to be the correct sign again:
-            data["score"] = data["score"] * (desc * 2 - 1)
+            self.scores = self.scores * (desc * 2 - 1)
             # Logging update on q-values
             LOGGER.info(
                 "\t- Found %i %s with q<=%g",
-                (data.loc[targets, "q-value"] <= self._eval_fdr).sum(),
+                (self.qvals[self.targets] <= self._eval_fdr).sum(),
                 level,
                 self._eval_fdr,
             )
@@ -459,8 +508,10 @@ class LinearConfidence(Confidence):
             # Calculate PEPs
             LOGGER.info("Assiging PEPs to %s...", level)
             try:
-                _, pep = qvality.getQvaluesFromScores(
-                    scores[targets], scores[~targets], includeDecoys=True
+                _, self.peps = qvality.getQvaluesFromScores(
+                    self.scores[self.targets],
+                    self.scores[~self.targets],
+                    includeDecoys=True,
                 )
             except SystemExit as msg:
                 if "no decoy hits available for PEP calculation" in str(msg):
@@ -468,16 +519,8 @@ class LinearConfidence(Confidence):
                 else:
                     raise
 
-            level = level.lower()
-            data["PEP"] = pep
-            if level != "proteins" and self._protein_column is not None:
-                data[self._protein_column] = data.pop(self._protein_column)
-            self.confidence_estimates[level] = data.loc[targets, :]
-            self.decoy_confidence_estimates[level] = data.loc[~targets, :]
-
-        if "proteins" not in self.confidence_estimates.keys():
-            self.confidence_estimates["proteins"] = None
-            self.decoy_confidence_estimates["proteins"] = None
+            logging.info(f"Writing {level} results...")
+            self.to_txt(data_path, level.lower())
 
     def to_flashlfq(self, out_file="mokapot.flashlfq.txt"):
         """Save confidenct peptides for quantification with FlashLFQ.

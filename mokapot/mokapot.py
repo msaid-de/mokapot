@@ -127,25 +127,6 @@ def main():
 
             trained_model.save(str(out_file))
 
-    # Determine how to write the results:
-    logging.info("Writing results...")
-    if config.aggregate or len(config.psm_files) == 1:
-        psms.to_txt(
-            dest_dir=config.dest_dir,
-            file_root=config.file_root,
-            decoys=config.keep_decoys,
-        )
-    else:
-        for dat, prefix in zip(psms, prefixes):
-            if config.file_root is not None:
-                prefix = ".".join([config.file_root, prefix])
-
-            dat.to_txt(
-                dest_dir=config.dest_dir,
-                file_root=prefix,
-                decoys=config.keep_decoys,
-            )
-
     total_time = round(time.time() - start)
     total_time = str(datetime.timedelta(seconds=total_time))
 
@@ -199,8 +180,7 @@ if __name__ == "__main__":
         main()
     except RuntimeError as e:
         logging.error(f"[Error] {e}")
-        sys.exit(250) # input failure
+        sys.exit(250)  # input failure
     except ValueError as e:
         logging.error(f"[Error] {e}")
-        sys.exit(250) # input failure
-
+        sys.exit(250)  # input failure
