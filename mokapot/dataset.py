@@ -627,7 +627,7 @@ def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
     df = pd.concat(
         [
             read_file(
-                file=file, use_cols=columns + [psms_info["target_column"]]
+                file_name=file, use_cols=columns + [psms_info["target_column"]]
             )
             for file in psms_info["file"]
         ],
@@ -671,7 +671,7 @@ def find_best_feature(psms_info, eval_fdr):
             df = pd.concat(
                 [
                     read_file(
-                        file=file,
+                        file_name=file,
                         use_cols=[best_feat, psms_info["target_column"]],
                     )
                     for file in psms_info["file"]
@@ -695,8 +695,8 @@ def find_best_feature(psms_info, eval_fdr):
 def update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
     df = pd.concat(
         [
-            read_file(file=file, use_cols=[psms_info["target_column"]])
-            for file in psms_info["file"]
+            read_file(file_name=_file, use_cols=[psms_info["target_column"]])
+            for _file in psms_info["file"]
         ],
         ignore_index=True,
     )

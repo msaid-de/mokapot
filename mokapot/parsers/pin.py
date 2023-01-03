@@ -8,10 +8,12 @@ import pandas as pd
 from joblib import Parallel, delayed
 
 from .. import utils
+from ..constants import (
+    CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
+    CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS,
+)
 
 LOGGER = logging.getLogger(__name__)
-CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS = 19
-CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS = 4500000
 
 
 # Functions -------------------------------------------------------------------
@@ -252,15 +254,15 @@ def drop_missing_values(file, column):
             return na_mask[~na_mask].index
 
 
-def open_file(file):
-    if str(file).endswith(".gz"):
-        return gzip.open(file)
+def open_file(file_name):
+    if str(file_name).endswith(".gz"):
+        return gzip.open(file_name)
     else:
-        return open(file)
+        return open(file_name)
 
 
-def read_file(file, use_cols=None):
-    with open_file(file) as f:
+def read_file(file_name, use_cols=None):
+    with open_file(file_name) as f:
         return pd.read_csv(
             f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
         )

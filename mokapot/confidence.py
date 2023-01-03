@@ -27,10 +27,9 @@ from .dataset import find_best_feature
 from .picked_protein import picked_protein
 from .writers import to_flashlfq, to_txt
 from .parsers.pin import read_file, convert_targets_column, read_file_in_chunks
+from .constants import CONFIDENCE_CHUNK_SIZE
 
 LOGGER = logging.getLogger(__name__)
-
-_CHUNK_SIZE = 1000000
 
 # Classes ---------------------------------------------------------------------
 class GroupedConfidence:
@@ -633,7 +632,7 @@ def assign_confidence(
         LOGGER.info("Selected %s as the best feature.", feat)
         scores = pd.concat(
             [
-                read_file(file=file, use_cols=[feat])
+                read_file(file_name=file, use_cols=[feat])
                 for file in psms_info["file"]
             ],
             ignore_index=True,
@@ -642,10 +641,12 @@ def assign_confidence(
     if psms_info["group_column"] is None:
         reader = read_file_in_chunks(
             file=psms_info["file"][0],
-            chunk_size=_CHUNK_SIZE,
+            chunk_size=CONFIDENCE_CHUNK_SIZE,
             use_cols=psms_info["metadata_columns"],
         )
-        scores_slices = utils.create_chunks(scores, chunk_size=_CHUNK_SIZE)
+        scores_slices = utils.create_chunks(
+            scores, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
         scores_metadata_path = "scores_metadata.csv"
         for chunk_metadata, score_chunk in zip(reader, scores_slices):
             chunk_metadata["score"] = score_chunk

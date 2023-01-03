@@ -13,12 +13,13 @@ from . import utils
 from .dataset import LinearPsmDataset, calibrate_scores, update_labels
 from .confidence import assign_confidence
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
+from .constants import (
+    CHUNK_SIZE_THREAD_PREDICTION,
+    CHUNK_SIZE_ROWS_PREDICTION,
+    CHUNK_SIZE_READ_ALL_DATA,
+)
 
 LOGGER = logging.getLogger(__name__)
-CHUNK_SIZE_READ_ALL_DATA = 1000000
-CHUNK_SIZE_UPDATE_LABELS_COLUMNS = 2
-CHUNK_SIZE_ROWS_PREDICTION = 1500000
-CHUNK_SIZE_THREAD_PREDICTION = 212500
 
 
 # Functions -------------------------------------------------------------------
@@ -101,7 +102,8 @@ def brew(
     df_spectra = pd.concat(
         [
             read_file(
-                file=p["file"], use_cols=spectrum_columns + [target_column]
+                file_name=p["file"],
+                use_cols=spectrum_columns + [target_column],
             )
             for p in psms_info
         ],
