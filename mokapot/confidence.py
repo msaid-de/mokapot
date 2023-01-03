@@ -258,19 +258,13 @@ class Confidence:
 
         """
 
-        file_base = "mokapot"
-        if file_root is not None:
-            file_base = file_root + "." + file_base
-        if dest_dir is not None:
-            file_base = Path(dest_dir, file_base)
-
         reader = read_file_in_chunks(
             file=data_path,
-            chunk_size=_CHUNK_SIZE,
+            chunk_size=CONFIDENCE_CHUNK_SIZE,
             use_cols=["SpecId", "ScanNr", "ExpMass", "Peptide", "Proteins"],
         )
         self.scores, self.qvals, self.peps, self.targets = [
-            utils.create_chunks(val, chunk_size=_CHUNK_SIZE)
+            utils.create_chunks(val, chunk_size=CONFIDENCE_CHUNK_SIZE)
             for val in [self.scores, self.qvals, self.peps, self.targets]
         ]
         output_columns = sep.join(
@@ -279,16 +273,17 @@ class Confidence:
                 "ScanNr",
                 "ExpMass",
                 "Peptide",
-                "mokapot score",
-                "mokapot q-value",
-                "mokapot PEP",
+                "score",
+                "q-value",
+                "PEP",
                 "Proteins",
                 "\n",
             ]
         )
-
-        outfile_t = str(file_base) + f".{level}.txt"
-        outfile_d = str(file_base) + f"decoys.{level}.txt"
+        if file_root is not None:
+            dest_dir = Path(dest_dir, file_root)
+        outfile_t = str(dest_dir) + f"{level}.txt"
+        outfile_d = str(dest_dir) + f"decoys.{level}.txt"
         with open(outfile_t, "w") as fp:
             fp.write(output_columns)
         if decoys:
@@ -419,7 +414,13 @@ class LinearConfidence(Confidence):
         )
 
         self._assign_confidence(
-            psms_path, peptides_path, desc=desc, decoys=decoys, sep=sep
+            psms_path,
+            peptides_path,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            decoys=decoys,
+            sep=sep,
         )
 
         self.accepted = {}
@@ -536,7 +537,7 @@ class LinearConfidence(Confidence):
                 )
             except SystemExit as msg:
                 if "no decoy hits available for PEP calculation" in str(msg):
-                    pep = 0
+                    self.peps = 0
                 else:
                     raise
 
@@ -718,8 +719,6 @@ def assign_confidence(
             scores, chunk_size=CONFIDENCE_CHUNK_SIZE
         )
         scores_metadata_path = "scores_metadata.csv"
-        print(scores_slices)
-        print(scores)
         for chunk_metadata, score_chunk in zip(reader, scores_slices):
             chunk_metadata["score"] = score_chunk
             chunk_metadata.to_csv(

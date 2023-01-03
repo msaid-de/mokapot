@@ -216,7 +216,7 @@ def brew(
             "using the original model."
         )
 
-    return psms_info, models, scores, desc
+    return psms_info, models, scores[0], desc
 
 
 # Utility Functions -----------------------------------------------------------
