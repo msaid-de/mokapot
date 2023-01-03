@@ -15,19 +15,21 @@ We recommend using the :py:func:`~mokapot.brew()` function or the
 :py:meth:`~mokapot.LinearPsmDataset.assign_confidence()` method to obtain these
 confidence estimates, rather than initializing the classes below directly.
 """
+import os
 import logging
-
 import pandas as pd
 import matplotlib.pyplot as plt
 from triqler import qvality
 
 from . import qvalues
 from . import utils
+from .dataset import find_best_feature
 from .picked_protein import picked_protein
 from .writers import to_flashlfq, to_txt
+from .parsers.pin import read_file, convert_targets_column, read_file_in_chunks
+from .constants import CONFIDENCE_CHUNK_SIZE
 
 LOGGER = logging.getLogger(__name__)
-
 
 # Classes ---------------------------------------------------------------------
 class GroupedConfidence:
@@ -40,10 +42,8 @@ class GroupedConfidence:
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+    psms_info : Dict
+        Dict contain information about percolator input.
     scores : np.ndarray
         A vector containing the score of each PSM.
     desc : bool
@@ -58,8 +58,9 @@ class GroupedConfidence:
     group_confidence_estimates: Dict
     """
 
-    def __init__(self, psms, psms_info, scores, desc=True, eval_fdr=0.01):
+    def __init__(self, psms_info, scores, desc=True, eval_fdr=0.01):
         """Initialize a GroupedConfidence object"""
+        psms = read_file(psms_info["file"][0])
         self.group_column = psms_info["group_column"]
         psms_info["group_column"] = None
         scores = scores * (desc * 2 - 1)
@@ -76,13 +77,14 @@ class GroupedConfidence:
         )
 
         self._group_confidence_estimates = {}
-        for group, group_df in psms.groupby(psms_info["group_column"]):
+        for group, group_df in psms.groupby(self.group_column):
             LOGGER.info("Group: %s == %s", self.group_column, group)
             tdc_winners = group_df.index.intersection(idx)
             group_psms = group_df.loc[tdc_winners, :]
             group_scores = scores.loc[group_psms.index].values + 1
+            psms_info["file"] = ["group_psms.csv"]
+            group_psms.to_csv(psms_info["file"][0], sep="\t", index=False)
             res = assign_confidence(
-                group_psms,
                 psms_info,
                 group_scores * (2 * desc - 1),
                 desc=desc,
@@ -197,15 +199,18 @@ class Confidence:
         "peptide_pairs": "Peptide Pairs",
     }
 
-    def __init__(self, psms, psms_info, scores, desc):
+    def __init__(self, psms_info):
         """Initialize a PsmConfidence object."""
-
-        self._score_column = _new_column("score", psms)
+        self._score_column = "score"
+        self._target_column = psms_info["target_column"]
+        self._protein_column = psms_info["protein_column"]
+        self._metadata_column = psms_info["metadata_columns"]
         self._has_proteins = psms_info["has_proteins"]
 
-        # Flip sign of scores if not descending
-        psms[self._score_column] = scores * (desc * 2 - 1)
-
+        if self._has_proteins:
+            self._proteins = self._has_proteins
+        else:
+            self._proteins = None
         # This attribute holds the results as DataFrames:
         self.confidence_estimates = {}
         self.decoy_confidence_estimates = {}
@@ -311,12 +316,12 @@ class LinearConfidence(Confidence):
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    scores : np.ndarray
-        A vector containing the score of each PSM.
+    psms_info : Dict
+        Dict contain information about percolator input.
+    psms_path : Path
+            File with unique psms.
+    peptides_path : Path
+            File with unique peptides.
     desc : bool
         Are higher scores better?
     eval_fdr : float
@@ -326,25 +331,23 @@ class LinearConfidence(Confidence):
     Attributes
     ----------
     levels : list of str
-    psms : pandas.DataFrame
-        Confidence estimates for PSMs in the dataset.
-    peptides : pandas.DataFrame
-        Confidence estimates for peptides in the dataset.
-    proteins : pandas.DataFrame or None
-        Confidence estimates for proteins in the dataset.
     confidence_estimates : Dict[str, pandas.DataFrame]
         A dictionary of confidence estimates at each level.
     decoy_confidence_estimates : Dict[str, pandas.DataFrame]
         A dictionary of confidence estimates for the decoys at each level.
     """
 
-    def __init__(self, psms, psms_info, scores, desc=True, eval_fdr=0.01):
+    def __init__(
+        self,
+        psms_info,
+        psms_path,
+        peptides_path,
+        desc=True,
+        eval_fdr=0.01,
+    ):
         """Initialize a a LinearPsmConfidence object"""
-        super().__init__(psms, psms_info, scores, desc)
-        self._target_column = _new_column("target", psms)
-        psms = psms.rename(
-            columns={psms_info["target_column"]: self._target_column}
-        )
+        super().__init__(psms_info)
+        self._target_column = psms_info["target_column"]
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
         self._protein_column = psms_info["protein_column"]
@@ -356,10 +359,7 @@ class LinearConfidence(Confidence):
             "+".join(self._psm_columns),
         )
 
-        psms = self._perform_tdc(psms, self._psm_columns)
-        LOGGER.info("\t- Found %i PSMs from unique spectra.", len(psms))
-
-        self._assign_confidence(psms, desc=desc)
+        self._assign_confidence(psms_path, peptides_path, desc=desc)
 
         self.accepted = {}
         for level in self.levels:
@@ -386,47 +386,54 @@ class LinearConfidence(Confidence):
         """Calculate the number of accepted discoveries"""
         disc = self.confidence_estimates[level]
         if disc is not None:
-            return (disc["mokapot q-value"] <= self._eval_fdr).sum()
+            return (disc["q-value"] <= self._eval_fdr).sum()
         else:
             return None
 
-    def _assign_confidence(self, psms, desc=True):
+    def _assign_confidence(self, psms_path, peptides_path, desc=True):
         """
         Assign confidence to PSMs and peptides.
 
         Parameters
         ----------
-        psms : Dataframe
-            Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+        psms_path : Path
+            File with unique psms.
+        peptides_path : Path
+            File with unique peptides.
         desc : bool
             Are higher scores better?
         """
         levels = ["PSMs", "peptides"]
-        peptide_idx = utils.groupby_max(
-            psms, self._peptide_column, self._score_column
-        )
-
-        peptides = psms.loc[peptide_idx]
-        LOGGER.info("\t- Found %i unique peptides.", len(peptides))
-
-        level_data = [psms, peptides]
-
+        level_data_path = [psms_path, peptides_path]
         if self._has_proteins:
+            data = read_file(
+                peptides_path, use_cols=self._metadata_column + ["score"]
+            )
+            data = data.apply(pd.to_numeric, errors="ignore")
+            convert_targets_column(
+                data=data, target_column=self._target_column
+            )
             proteins = picked_protein(
-                peptides,
+                data,
                 self._target_column,
                 self._peptide_column,
                 self._score_column,
                 self._proteins,
             )
+            proteins_path = "proteins.csv"
+            proteins.to_csv(proteins_path, index=False, sep="\t")
             levels += ["proteins"]
-            level_data += [proteins]
+            level_data_path += [proteins_path]
             LOGGER.info("\t- Found %i unique protein groups.", len(proteins))
 
-        for level, data in zip(levels, level_data):
-            data = data.sort_values(
-                self._score_column, ascending=False
-            ).reset_index(drop=True)
+        for level, data_path in zip(levels, level_data_path):
+            data = read_file(
+                data_path, use_cols=self._metadata_column + ["score"]
+            )
+            data = data.apply(pd.to_numeric, errors="ignore")
+            convert_targets_column(
+                data=data, target_column=self._target_column
+            )
             scores = data.loc[:, self._score_column].values
             targets = data.loc[:, self._target_column].astype(bool).values
             if all(targets):
@@ -437,20 +444,14 @@ class LinearConfidence(Confidence):
 
             # Estimate q-values and assign to dataframe
             LOGGER.info("Assiging q-values to %s...", level)
-            data["mokapot q-value"] = qvalues.tdc(scores, targets, desc=True)
-
-            # Make output tables pretty
-            data = data.drop(self._target_column, axis=1).rename(
-                columns={self._score_column: "mokapot score"}
-            )
+            data["q-value"] = qvalues.tdc(scores, targets, desc=True)
 
             # Set scores to be the correct sign again:
-            data["mokapot score"] = data["mokapot score"] * (desc * 2 - 1)
-
+            data["score"] = data["score"] * (desc * 2 - 1)
             # Logging update on q-values
             LOGGER.info(
                 "\t- Found %i %s with q<=%g",
-                (data.loc[targets, "mokapot q-value"] <= self._eval_fdr).sum(),
+                (data.loc[targets, "q-value"] <= self._eval_fdr).sum(),
                 level,
                 self._eval_fdr,
             )
@@ -468,10 +469,9 @@ class LinearConfidence(Confidence):
                     raise
 
             level = level.lower()
-            data["mokapot PEP"] = pep
+            data["PEP"] = pep
             if level != "proteins" and self._protein_column is not None:
                 data[self._protein_column] = data.pop(self._protein_column)
-
             self.confidence_estimates[level] = data.loc[targets, :]
             self.decoy_confidence_estimates[level] = data.loc[~targets, :]
 
@@ -517,12 +517,12 @@ class CrossLinkedConfidence(Confidence):
 
     Parameters
     ----------
-    psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    psms_info : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
-    scores : np.ndarray
-        A vector containing the score of each PSM.
+    psms_path : Path
+            File with unique psms.
+    peptides_path : Path
+            File with unique peptides.
+    psms_info : Dict
+        Dict contain information about percolator input.
     desc : bool
         Are higher scores better?
 
@@ -536,35 +536,45 @@ class CrossLinkedConfidence(Confidence):
     :meta private:
     """
 
-    def __init__(self, psms, psms_info, scores, desc=True):
+    def __init__(
+        self,
+        psms_info,
+        psms_path,
+        peptides_path,
+        desc=True,
+    ):
         """Initialize a CrossLinkedConfidence object"""
-        super().__init__(psms, psms_info, scores, desc)
+        super().__init__(psms_info)
         self._target_column = psms_info["target_column"]
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
 
-        psms = self._perform_tdc(psms, self._psm_columns)
-        self._assign_confidence(psms, desc=desc)
+        self._assign_confidence(psms_path, peptides_path, desc=desc)
 
-    def _assign_confidence(self, psms, desc=True):
+    def _assign_confidence(self, psms_path, peptides_path, desc=True):
         """
         Assign confidence to PSMs and peptides.
 
         Parameters
         ----------
-        psms : Dataframe
-        Dataframe of percolator with metadata columns [SpecId, Label, ScanNr, ExpMass, Peptide, score, Proteins].
+        psms_path : Path
+            File with unique psms.
+        peptides_path : Path
+            File with unique peptides.
         desc : bool
             Are higher scores better?
         """
-        peptide_idx = utils.groupby_max(
-            psms, self._peptide_columns, self._score_column
-        )
 
-        peptides = psms.loc[peptide_idx]
         levels = ("csms", "peptide_pairs")
 
-        for level, data in zip(levels, (psms, peptides)):
+        for level, data_path in zip(levels, [psms_path, peptides_path]):
+            data = read_file(
+                data_path, use_cols=self._metadata_column + ["score"]
+            )
+            data = data.apply(pd.to_numeric, errors="ignore")
+            convert_targets_column(
+                data=data, target_column=self._target_column
+            )
             scores = data.loc[:, self._score_column].values
             targets = data.loc[:, self._target_column].astype(bool).values
             data["mokapot q-value"] = qvalues.crosslink_tdc(
@@ -587,16 +597,104 @@ class CrossLinkedConfidence(Confidence):
 
 
 # Functions -------------------------------------------------------------------
-def assign_confidence(psms, psms_info, scores, eval_fdr, desc):
+def assign_confidence(
+    psms_info,
+    scores=None,
+    desc=True,
+    eval_fdr=0.01,
+):
+    """Assign confidence to PSMs peptides, and optionally, proteins.
+
+    Parameters
+    ----------
+    psms_info : dict
+        All info about the input data
+    scores : numpy.ndarray
+        The scores by which to rank the PSMs. The default, :code:`None`,
+        uses the feature that accepts the most PSMs at an FDR threshold of
+        `eval_fdr`.
+    desc : bool
+        Are higher scores better?
+    eval_fdr : float
+        The FDR threshold at which to report and evaluate performance. If
+        `scores` is not :code:`None`, this parameter has no affect on the
+        analysis itself, but does affect logging messages and the FDR
+        threshold applied for some output formats, such as FlashLFQ.
+
+    Returns
+    -------
+    LinearConfidence
+        A :py:class:`~mokapot.confidence.LinearConfidence` object storing
+        the confidence estimates for the collection of PSMs.
+    """
+    if scores is None:
+        feat, _, _, desc = find_best_feature(psms_info, eval_fdr)
+        LOGGER.info("Selected %s as the best feature.", feat)
+        scores = pd.concat(
+            [
+                read_file(file_name=file, use_cols=[feat])
+                for file in psms_info["file"]
+            ],
+            ignore_index=True,
+        ).values
+
     if psms_info["group_column"] is None:
+        reader = read_file_in_chunks(
+            file=psms_info["file"][0],
+            chunk_size=CONFIDENCE_CHUNK_SIZE,
+            use_cols=psms_info["metadata_columns"],
+        )
+        scores_slices = utils.create_chunks(
+            scores, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        scores_metadata_path = "scores_metadata.csv"
+        for chunk_metadata, score_chunk in zip(reader, scores_slices):
+            chunk_metadata["score"] = score_chunk
+            chunk_metadata.to_csv(
+                "scores_metadata.csv",
+                sep="\t",
+                index=False,
+                mode="a",
+                header=None,
+            )
+            metadata_columns = list(chunk_metadata.columns)
+        psms_path = "psms.csv"
+        peptides_path = "peptides.csv"
+        iterable_sorted = utils.sort_file_on_disk(
+            file_path=scores_metadata_path, sort_key=-1, sep="\t", reverse=True
+        )
         LOGGER.info("Assigning confidence...")
+        LOGGER.info("Performing target-decoy competition...")
+        LOGGER.info(
+            "Keeping the best match per %s columns...",
+            "+".join(psms_info["spectrum_columns"]),
+        )
+        with open(psms_path, "w") as f_psm:
+            f_psm.write("\t".join(metadata_columns + ["score", "\n"]))
+        with open(peptides_path, "w") as f_peptide:
+            f_peptide.write("\t".join(metadata_columns + ["score", "\n"]))
+
+        unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
+            iterable=iterable_sorted,
+            out_psms="psms.csv",
+            out_peptides="peptides.csv",
+            sep="\t",
+        )
+        os.remove(scores_metadata_path)
+        LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
+        LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
+
         return LinearConfidence(
-            psms, psms_info, scores, eval_fdr=eval_fdr, desc=desc
+            psms_info=psms_info,
+            psms_path=psms_path,
+            peptides_path=peptides_path,
+            eval_fdr=eval_fdr,
+            desc=desc,
         )
     else:
         LOGGER.info("Assigning confidence within groups...")
         return GroupedConfidence(
-            psms, psms_info, scores, eval_fdr=eval_fdr, desc=desc
+            psms_info, scores, eval_fdr=eval_fdr, desc=desc
         )
 
 

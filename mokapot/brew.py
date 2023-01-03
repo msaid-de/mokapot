@@ -10,19 +10,16 @@ import numpy as np
 from joblib import Parallel, delayed
 from .model import PercolatorModel
 from . import utils
-from .dataset import (
-    LinearPsmDataset,
-    calibrate_scores,
-    update_labels,
-)
+from .dataset import LinearPsmDataset, calibrate_scores, update_labels
 from .confidence import assign_confidence
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
+from .constants import (
+    CHUNK_SIZE_THREAD_PREDICTION,
+    CHUNK_SIZE_ROWS_PREDICTION,
+    CHUNK_SIZE_READ_ALL_DATA,
+)
 
 LOGGER = logging.getLogger(__name__)
-CHUNK_SIZE_READ_ALL_DATA = 1000000
-CHUNK_SIZE_UPDATE_LABELS_COLUMNS = 2
-CHUNK_SIZE_ROWS_PREDICTION = 1500000
-CHUNK_SIZE_THREAD_PREDICTION = 212500
 
 
 # Functions -------------------------------------------------------------------
@@ -105,7 +102,8 @@ def brew(
     df_spectra = pd.concat(
         [
             read_file(
-                file=p["file"], use_cols=spectrum_columns + [target_column]
+                file_name=p["file"],
+                use_cols=spectrum_columns + [target_column],
             )
             for p in psms_info
         ],
@@ -181,7 +179,7 @@ def brew(
         feat_total = 0
 
     preds = [
-        _update_labels(p, s, test_fdr) for p, s in zip([psms_info], scores)
+        update_labels(p, s, test_fdr) for p, s in zip([psms_info], scores)
     ]
     pred_total = sum([(pred == 1).sum() for pred in preds])
 
@@ -221,7 +219,7 @@ def brew(
 
     LOGGER.info("")
     res = [
-        _assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
+        assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
         for p, s, d in zip([psms_info], scores, descs)
     ]
 
@@ -309,9 +307,9 @@ def make_train_sets(test_idx, subset_max_train, data_size):
                     train_idx_size,
                     subset_max_train,
                 )
-            train_idx = np.random.choice(
-                train_idx, subset_max_train, replace=False
-            )
+                train_idx = np.random.choice(
+                    train_idx, subset_max_train, replace=False
+                )
         yield train_idx
 
 
@@ -333,94 +331,6 @@ def _create_psms(psms_info, data, enforce_checks=True):
         charge_column=psms_info["charge_column"],
         copy_data=False,
         enforce_checks=enforce_checks,
-    )
-
-
-def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
-    df = pd.concat(
-        [
-            read_file(
-                file=file, use_cols=columns + [psms_info["target_column"]]
-            )
-            for file in psms_info["file"]
-        ],
-        ignore_index=True,
-    )
-
-    return (
-        df.loc[:, columns].apply(
-            update_labels,
-            targets=df.loc[:, psms_info["target_column"]],
-            eval_fdr=eval_fdr,
-            desc=desc,
-        )
-        == 1
-    ).sum()
-
-
-def find_best_feature(psms_info, eval_fdr):
-    best_feat = None
-    best_positives = 0
-    new_labels = None
-
-    col_slices = utils.create_chunks(
-        data=psms_info["feature_columns"],
-        chunk_size=CHUNK_SIZE_UPDATE_LABELS_COLUMNS,
-    )
-    for desc in (True, False):
-        labs = Parallel(n_jobs=-1, require="sharedmem")(
-            delayed(targets_count_by_feature)(
-                psms_info=psms_info,
-                eval_fdr=eval_fdr,
-                columns=list(c),
-                desc=desc,
-            )
-            for c in col_slices
-        )
-        num_passing = pd.concat(labs)
-        feat_idx = num_passing.idxmax()
-        num_passing = num_passing[feat_idx]
-
-        if num_passing > best_positives:
-            best_positives = num_passing
-            best_feat = feat_idx
-            df = pd.concat(
-                [
-                    read_file(
-                        file=file,
-                        use_cols=[best_feat, psms_info["target_column"]],
-                    )
-                    for file in psms_info["file"]
-                ],
-                ignore_index=True,
-            )
-            new_labels = update_labels(
-                scores=df.loc[:, best_feat],
-                targets=df[psms_info["target_column"]],
-                eval_fdr=eval_fdr,
-                desc=desc,
-            )
-            best_desc = desc
-
-    if best_feat is None:
-        raise RuntimeError("No PSMs found below the 'eval_fdr'.")
-
-    return best_feat, best_positives, new_labels, best_desc
-
-
-def _update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
-    df = pd.concat(
-        [
-            read_file(file=file, use_cols=[psms_info["target_column"]])
-            for file in psms_info["file"]
-        ],
-        ignore_index=True,
-    )
-    return update_labels(
-        scores=scores,
-        targets=df[psms_info["target_column"]],
-        eval_fdr=eval_fdr,
-        desc=desc,
     )
 
 
@@ -487,71 +397,6 @@ def _predict(test_idx, psms_info, models, test_fdr):
     rev_idx = np.argsort(sum(test_idx, [])).tolist()
     del test_idx
     return np.concatenate(scores)[rev_idx]
-
-
-def _assign_confidence(psms_info, scores=None, desc=True, eval_fdr=0.01):
-    """Assign confidence to PSMs peptides, and optionally, proteins.
-
-    Parameters
-    ----------
-    psms_info : dict
-        All info about the input data
-    scores : numpy.ndarray
-        The scores by which to rank the PSMs. The default, :code:`None`,
-        uses the feature that accepts the most PSMs at an FDR threshold of
-        `eval_fdr`.
-    desc : bool
-        Are higher scores better?
-    eval_fdr : float
-        The FDR threshold at which to report and evaluate performance. If
-        `scores` is not :code:`None`, this parameter has no affect on the
-        analysis itself, but does affect logging messages and the FDR
-        threshold applied for some output formats, such as FlashLFQ.
-
-    Returns
-    -------
-    LinearConfidence
-        A :py:class:`~mokapot.confidence.LinearConfidence` object storing
-        the confidence estimates for the collection of PSMs.
-    """
-    if scores is None:
-        feat, _, _, desc = find_best_feature(psms_info, eval_fdr)
-        LOGGER.info("Selected %s as the best feature.", feat)
-        scores = pd.concat(
-            [
-                read_file(file=file, use_cols=feat)
-                for file in psms_info["file"]
-            ],
-            ignore_index=True,
-        ).values
-
-    data = pd.concat(
-        [
-            read_file(
-                file=file,
-                use_cols=[
-                    psms_info["target_column"],
-                    psms_info["peptide_column"],
-                    psms_info["protein_column"],
-                    psms_info["specId_column"],
-                    psms_info["spectrum_columns"][0],
-                    psms_info["spectrum_columns"][1],
-                ],
-            )
-            for file in psms_info["file"]
-        ],
-        ignore_index=True,
-    )
-
-    data = data.apply(pd.to_numeric, errors="ignore")
-    convert_targets_column(data=data, target_column=psms_info["target_column"])
-    return assign_confidence(
-        psms=data,
-        psms_info=psms_info,
-        scores=scores,
-        eval_fdr=eval_fdr,
-        desc=desc,
-    )
 
 
 def _fit_model(train_set, psms_info, model, fold, seed):

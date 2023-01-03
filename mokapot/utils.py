@@ -63,10 +63,30 @@ def create_chunks(data, chunk_size):
     return [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
 
 
-def sort_file_on_disk(file_path, sort_key, reverse=False):
+def sort_file_on_disk(file_path, sort_key, sep=",", reverse=False):
     return sorted_in_disk(
         read_iter_from_file(file_path),
-        key=lambda row: float(row.split(",")[sort_key]),
+        key=lambda row: float(row.split(sep)[sort_key]),
         write_processes=8,
         reverse=reverse,
     )
+
+
+def get_unique_psms_and_peptides(iterable, out_psms, out_peptides, sep):
+    seen_psm = set()
+    seen_peptide = set()
+    f_psm = open(out_psms, "a")
+    f_peptide = open(out_peptides, "a")
+    for line in iterable:
+        line_list = line.split(sep)
+        line_hash_psm = tuple([int(line_list[2]), float(line_list[3])])
+        line_hash_peptide = line_list[4]
+        if line_hash_psm not in seen_psm:
+            seen_psm.add(line_hash_psm)
+            f_psm.write(f"{line}\n")
+            if line_hash_peptide not in seen_peptide:
+                seen_peptide.add(line_hash_peptide)
+                f_peptide.write(f"{line}\n")
+    f_psm.close()
+    f_peptide.close()
+    return [len(seen_psm), len(seen_peptide)]
