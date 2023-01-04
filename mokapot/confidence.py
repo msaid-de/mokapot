@@ -59,7 +59,17 @@ class GroupedConfidence:
     group_confidence_estimates: Dict
     """
 
-    def __init__(self, psms_info, scores, desc=True, eval_fdr=0.01):
+    def __init__(
+        self,
+        psms_info,
+        scores,
+        desc=True,
+        eval_fdr=0.01,
+        decoys=False,
+        dest_dir=None,
+        file_root=None,
+        sep="\t",
+    ):
         """Initialize a GroupedConfidence object"""
         psms = read_file(psms_info["file"][0])
         self.group_column = psms_info["group_column"]
@@ -90,6 +100,10 @@ class GroupedConfidence:
                 group_scores * (2 * desc - 1),
                 desc=desc,
                 eval_fdr=eval_fdr,
+                dest_dir=dest_dir,
+                file_root=file_root,
+                sep=sep,
+                decoys=decoys,
             )
             self._group_confidence_estimates[group] = res
 
@@ -609,6 +623,10 @@ class CrossLinkedConfidence(Confidence):
         psms_path,
         peptides_path,
         desc=True,
+        dest_dir=None,
+        file_root=None,
+        decoys=None,
+        sep="\t",
     ):
         """Initialize a CrossLinkedConfidence object"""
         super().__init__(psms_info)
@@ -616,9 +634,26 @@ class CrossLinkedConfidence(Confidence):
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
 
-        self._assign_confidence(psms_path, peptides_path, desc=desc)
+        self._assign_confidence(
+            psms_path,
+            peptides_path,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            decoys=decoys,
+            sep=sep,
+        )
 
-    def _assign_confidence(self, psms_path, peptides_path, desc=True):
+    def _assign_confidence(
+        self,
+        psms_path,
+        peptides_path,
+        desc=True,
+        decoys=False,
+        file_root=None,
+        dest_dir=None,
+        sep="\t",
+    ):
         """
         Assign confidence to PSMs and peptides.
 
@@ -642,25 +677,17 @@ class CrossLinkedConfidence(Confidence):
             convert_targets_column(
                 data=data, target_column=self._target_column
             )
-            scores = data.loc[:, self._score_column].values
-            targets = data.loc[:, self._target_column].astype(bool).values
-            data["mokapot q-value"] = qvalues.crosslink_tdc(
-                scores, targets, desc
-            )
+            self.scores = data.loc[:, self._score_column].values
+            self.targets = data.loc[:, self._target_column].astype(bool).values
+            self.qvals = qvalues.crosslink_tdc(self.scores, self.targets, desc)
 
-            data = (
-                data.loc[targets, :]
-                .sort_values(self._score_column, ascending=(not desc))
-                .reset_index(drop=True)
-                .drop(self._target_column, axis=1)
-                .rename(columns={self._score_column: "mokapot score"})
+            _, self.peps = qvality.getQvaluesFromScores(
+                self.scores[self.targets == 2], self.scores[~self.targets]
             )
-
-            _, pep = qvality.getQvaluesFromScores(
-                scores[targets == 2], scores[~targets]
+            logging.info(f"Writing {level} results...")
+            self.to_txt(
+                data_path, level.lower(), decoys, file_root, dest_dir, sep
             )
-            data["mokapot PEP"] = pep
-            self._confidence_estimates[level] = data
 
 
 # Functions -------------------------------------------------------------------
@@ -769,7 +796,14 @@ def assign_confidence(
     else:
         LOGGER.info("Assigning confidence within groups...")
         return GroupedConfidence(
-            psms_info, scores, eval_fdr=eval_fdr, desc=desc
+            psms_info,
+            scores,
+            eval_fdr=eval_fdr,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            sep=sep,
+            decoys=decoys,
         )
 
 
