@@ -69,9 +69,15 @@ class GroupedConfidence:
         dest_dir=None,
         file_root=None,
         sep="\t",
+        combine=False,
     ):
         """Initialize a GroupedConfidence object"""
-        psms = read_file(psms_info["file"][0])
+        psms = read_file(
+            psms_info["file"][0],
+            use_cols=list(psms_info["feature_columns"])
+            + list(psms_info["metadata_columns"]),
+        )
+        print(psms)
         self.group_column = psms_info["group_column"]
         psms_info["group_column"] = None
         scores = scores * (desc * 2 - 1)
@@ -95,7 +101,7 @@ class GroupedConfidence:
             group_scores = scores.loc[group_psms.index].values + 1
             psms_info["file"] = ["group_psms.csv"]
             group_psms.to_csv(psms_info["file"][0], sep="\t", index=False)
-            res = assign_confidence(
+            assign_confidence(
                 psms_info,
                 group_scores * (2 * desc - 1),
                 desc=desc,
@@ -104,8 +110,9 @@ class GroupedConfidence:
                 file_root=file_root,
                 sep=sep,
                 decoys=decoys,
+                group=group,
+                combine=combine,
             )
-            self._group_confidence_estimates[group] = res
 
     @property
     def group_confidence_estimates(self):
@@ -275,7 +282,7 @@ class Confidence:
         reader = read_file_in_chunks(
             file=data_path,
             chunk_size=CONFIDENCE_CHUNK_SIZE,
-            use_cols=["SpecId", "ScanNr", "ExpMass", "Peptide", "Proteins"],
+            use_cols=["ScanNr", "Peptide", "Proteins"],
         )
         self.scores, self.qvals, self.peps, self.targets = [
             utils.create_chunks(val, chunk_size=CONFIDENCE_CHUNK_SIZE)
@@ -283,21 +290,19 @@ class Confidence:
         ]
         output_columns = sep.join(
             [
-                "SpecId",
-                "ScanNr",
-                "ExpMass",
+                "PSMId",
                 "Peptide",
                 "score",
                 "q-value",
-                "PEP",
-                "Proteins",
+                "posterior_error_prob",
+                "proteinIds",
                 "\n",
             ]
         )
         if file_root is not None:
             dest_dir = Path(dest_dir, file_root)
-        outfile_t = str(dest_dir) + f"{level}.txt"
-        outfile_d = str(dest_dir) + f"decoys.{level}.txt"
+        outfile_t = str(dest_dir) + f"targets.{level}"
+        outfile_d = str(dest_dir) + f"decoys.{level}"
         with open(outfile_t, "w") as fp:
             fp.write(output_columns)
         if decoys:
@@ -412,6 +417,8 @@ class LinearConfidence(Confidence):
         file_root=None,
         decoys=None,
         sep="\t",
+        group=False,
+        combine=False,
     ):
         """Initialize a a LinearPsmConfidence object"""
         super().__init__(psms_info)
@@ -435,6 +442,8 @@ class LinearConfidence(Confidence):
             file_root=file_root,
             decoys=decoys,
             sep=sep,
+            group=group,
+            combine=combine,
         )
 
         self.accepted = {}
@@ -475,6 +484,8 @@ class LinearConfidence(Confidence):
         file_root=None,
         dest_dir=None,
         sep="\t",
+        group=False,
+        combine=False,
     ):
         """
         Assign confidence to PSMs and peptides.
@@ -556,9 +567,15 @@ class LinearConfidence(Confidence):
                     raise
 
             logging.info(f"Writing {level} results...")
-            self.to_txt(
-                data_path, level.lower(), decoys, file_root, dest_dir, sep
-            )
+            if group and not combine:
+                file_root = f"{group}."
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
+            else:
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
 
     def to_flashlfq(self, out_file="mokapot.flashlfq.txt"):
         """Save confidenct peptides for quantification with FlashLFQ.
@@ -700,6 +717,8 @@ def assign_confidence(
     file_root=None,
     sep="\t",
     decoys=False,
+    group=False,
+    combine=False,
 ):
     """Assign confidence to PSMs peptides, and optionally, proteins.
 
@@ -792,6 +811,8 @@ def assign_confidence(
             file_root=file_root,
             sep=sep,
             decoys=decoys,
+            group=group,
+            combine=combine,
         )
     else:
         LOGGER.info("Assigning confidence within groups...")
