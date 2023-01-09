@@ -290,6 +290,14 @@ def get_column_names_from_file(file, copy_data):
             return perc.readline().rstrip().split("\t")
 
 
+def get_rows_from_dataframe(idx, chunk, train_psms):
+    for k, train in enumerate(idx):
+        idx_ = list(set(train) & set(chunk.index))
+        train_psms[k].append(
+            chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
+        )
+
+
 def parse_in_chunks(psms_info, idx, chunk_size):
     """
     Parse a file in chunks
@@ -313,12 +321,10 @@ def parse_in_chunks(psms_info, idx, chunk_size):
         reader = read_file_in_chunks(
             file=file, chunk_size=chunk_size, use_cols=psms_info["columns"]
         )
-        for i, chunk in enumerate(reader):
-            for k, train in enumerate(idx):
-                idx_ = list(set(train) & set(chunk.index))
-                train_psms[k].append(
-                    chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
-                )
+        Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
+            for chunk in reader
+        )
 
     return Parallel(n_jobs=-1, require="sharedmem")(
         delayed(concat_chunks)(df=df, orig_idx=orig_idx)
