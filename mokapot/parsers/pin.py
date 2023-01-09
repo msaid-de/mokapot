@@ -291,6 +291,23 @@ def get_column_names_from_file(file, copy_data):
 
 
 def get_rows_from_dataframe(idx, chunk, train_psms):
+    """
+    extract rows from a chunk of a dataframe
+
+    Parameters
+    ----------
+    idx : list of list of indexes
+        The indexes to select from dataframe.
+    train_psms : list of list of dataframes
+        Contains subsets of dataframes that are already extracted.
+    chunk : dataframe
+        Subset of a dataframe.
+
+    Returns
+    -------
+    List
+        list of list of dataframes
+    """
     for k, train in enumerate(idx):
         idx_ = list(set(train) & set(chunk.index))
         train_psms[k].append(

@@ -300,10 +300,20 @@ class Confidence:
             chunk_size=CONFIDENCE_CHUNK_SIZE,
             use_cols=["ScanNr", "Peptide", "Proteins"],
         )
-        self.scores, self.qvals, self.peps, self.targets = [
-            utils.create_chunks(val, chunk_size=CONFIDENCE_CHUNK_SIZE)
-            for val in [self.scores, self.qvals, self.peps, self.targets]
-        ]
+
+        self.scores = utils.create_chunks(
+            self.scores, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.qvals = utils.create_chunks(
+            self.qvals, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.peps = utils.create_chunks(
+            self.peps, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.targets = utils.create_chunks(
+            self.targets, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+
         output_columns = sep.join(
             [
                 "PSMId",
