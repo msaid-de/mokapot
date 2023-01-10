@@ -86,27 +86,11 @@ def brew(
     if model is None:
         model = PercolatorModel()
 
-    try:
-        iter(psms_info)
-    except TypeError:
-        psms_info = [psms_info]
-
-    # Check that all of the datasets have the same features:
-    feat_set = set(psms_info[0]["feature_columns"])
-    if not all([set(p["feature_columns"]) == feat_set for p in psms_info]):
-        raise ValueError("All collections of PSMs must use the same features.")
-
-    target_column = psms_info[0]["target_column"]
-    spectrum_columns = psms_info[0]["spectrum_columns"]
-    df_spectra = pd.concat(
-        [
-            read_file(
-                file_name=p["file"],
-                use_cols=spectrum_columns + [target_column],
-            )
-            for p in psms_info
-        ],
-        ignore_index=True,
+    target_column = psms_info["target_column"]
+    spectrum_columns = psms_info["spectrum_columns"]
+    df_spectra = read_file(
+        file_name=psms_info["file"],
+        use_cols=spectrum_columns + [target_column],
     ).apply(pd.to_numeric, errors="ignore")
     df_spectra = convert_targets_column(df_spectra, target_column)
     data_size = len(df_spectra)
@@ -120,9 +104,6 @@ def brew(
             num_targets,
             num_decoys,
         )
-    # once we check all the datasets have the same features we can use only one metedata information
-    psms_info[0]["file"] = [psm["file"] for psm in psms_info]
-    psms_info = psms_info[0]
     df_spectra = df_spectra[spectrum_columns]
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_idx = _split(df_spectra, folds)
@@ -163,10 +144,10 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        scores = [_predict(test_idx, psms_info, models, test_fdr)]
+        scores = _predict(test_idx, psms_info, models, test_fdr)
     else:
         # If model training has failed
-        scores = [np.zeros(len(p.data)) for p in psms_info]
+        scores = np.zeros(data_size)
     # Find which is best: the learned model, the best feature, or
     # a pretrained model.
     if type(model) is not list and not model.override:
@@ -177,27 +158,21 @@ def brew(
     else:
         feat_total = 0
 
-    preds = [
-        update_labels(p, s, test_fdr) for p, s in zip([psms_info], scores)
-    ]
-    pred_total = sum([(pred == 1).sum() for pred in preds])
+    preds = update_labels(psms_info, scores, test_fdr)
+
+    pred_total = sum([(preds == 1).sum()])
 
     # Here, f[0] is the name of the best feature, and f[3] is a boolean
     if feat_total > pred_total:
         using_best_feat = True
-        scores = []
-        descs = []
         feat, _, desc = best_feats[best_feat_idx]
-        for dat in psms_info["file"]:
-            df = pd.read_csv(
-                dat,
-                sep="\t",
-                usecols=[feat],
-                index_col=False,
-                on_bad_lines="skip",
-            )
-            scores.append(df.values)
-            descs.append(desc)
+        scores = pd.read_csv(
+            psms_info["file"],
+            sep="\t",
+            usecols=[feat],
+            index_col=False,
+            on_bad_lines="skip",
+        ).values
 
     else:
         using_best_feat = False
@@ -216,7 +191,7 @@ def brew(
             "using the original model."
         )
 
-    return psms_info, models, scores[0], desc
+    return psms_info, models, scores, desc
 
 
 # Utility Functions -----------------------------------------------------------

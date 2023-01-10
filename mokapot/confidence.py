@@ -86,7 +86,7 @@ class GroupedConfidence:
     ):
         """Initialize a GroupedConfidence object"""
         psms = read_file(
-            psms_info["file"][0],
+            psms_info["file"],
             use_cols=list(psms_info["feature_columns"])
             + list(psms_info["metadata_columns"]),
         )
@@ -112,7 +112,7 @@ class GroupedConfidence:
             group_psms = group_df.loc[tdc_winners, :]
             group_scores = scores.loc[group_psms.index].values + 1
             psms_info["file"] = ["group_psms.csv"]
-            group_psms.to_csv(psms_info["file"][0], sep="\t", index=False)
+            group_psms.to_csv(psms_info["file"], sep="\t", index=False)
             assign_confidence(
                 psms_info,
                 group_scores * (2 * desc - 1),
@@ -847,17 +847,11 @@ def assign_confidence(
     if scores is None:
         feat, _, _, desc = find_best_feature(psms_info, eval_fdr)
         LOGGER.info("Selected %s as the best feature.", feat)
-        scores = pd.concat(
-            [
-                read_file(file_name=file, use_cols=[feat])
-                for file in psms_info["file"]
-            ],
-            ignore_index=True,
-        ).values
+        scores = read_file(file_name=psms_info["file"], use_cols=[feat]).values
 
     if psms_info["group_column"] is None:
         reader = read_file_in_chunks(
-            file=psms_info["file"][0],
+            file=psms_info["file"],
             chunk_size=CONFIDENCE_CHUNK_SIZE,
             use_cols=psms_info["metadata_columns"],
         )

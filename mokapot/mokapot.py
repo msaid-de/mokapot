@@ -57,11 +57,7 @@ def main():
 
     # Parse Datasets
     parse = get_parser(config)
-    if config.aggregate or len(config.psm_files) == 1:
-        datasets = parse(config.psm_files)
-    else:
-        datasets = [parse(f) for f in config.psm_files]
-        prefixes = [Path(f).stem for f in config.psm_files]
+    dataset = parse(config.psm_files)
 
     # Parse FASTA, if required:
     if config.proteins is not None:
@@ -77,11 +73,7 @@ def main():
             decoy_prefix=config.decoy_prefix,
         )
 
-        if config.aggregate or len(config.psm_files) == 1:
-            datasets.add_proteins(proteins)
-        else:
-            for dataset in datasets:
-                dataset.add_proteins(proteins)
+        dataset.add_proteins(proteins)
 
     # Define a model:
     if config.init_weights:
@@ -101,10 +93,11 @@ def main():
             direction=config.direction,
             override=config.override,
         )
+    print(dataset)
 
     # Fit the models:
     psms_info, models, scores, desc = brew(
-        datasets,
+        dataset,
         model=model,
         test_fdr=config.test_fdr,
         folds=config.folds,
