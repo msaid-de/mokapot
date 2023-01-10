@@ -128,14 +128,14 @@ def brew(
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_idx = _split(df_spectra, folds)
     del df_spectra
-    train_sets = make_train_sets(
-        test_idx=test_idx,
-        subset_max_train=subset_max_train,
-        data_size=data_size,
+    train_sets = list(
+        make_train_sets(
+            test_idx=test_idx,
+            subset_max_train=subset_max_train,
+            data_size=data_size,
+        )
     )
-    if max_workers != 1:
-        # train_sets can't be a generator for joblib :(
-        train_sets = list(train_sets)
+
     train_psms = parse_in_chunks(
         psms_info=psms_info,
         idx=train_sets,
