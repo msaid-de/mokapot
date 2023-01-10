@@ -72,8 +72,8 @@ def main():
             semi=config.semi,
             decoy_prefix=config.decoy_prefix,
         )
-
-        dataset.add_proteins(proteins)
+    else:
+        proteins = None
 
     # Define a model:
     if config.init_weights:
@@ -93,7 +93,6 @@ def main():
             direction=config.direction,
             override=config.override,
         )
-    print(dataset)
 
     # Fit the models:
     psms_info, models, scores, desc = brew(
@@ -114,6 +113,7 @@ def main():
         dest_dir=config.dest_dir,
         file_root=config.file_root,
         decoys=config.keep_decoys,
+        proteins=proteins,
     )
 
     if config.dest_dir is not None:
