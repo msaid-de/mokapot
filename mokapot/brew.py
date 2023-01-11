@@ -11,7 +11,6 @@ from joblib import Parallel, delayed
 from .model import PercolatorModel
 from . import utils
 from .dataset import LinearPsmDataset, calibrate_scores, update_labels
-from .confidence import assign_confidence
 from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
 from .constants import (
     CHUNK_SIZE_THREAD_PREDICTION,
@@ -202,7 +201,7 @@ def brew(
 
     else:
         using_best_feat = False
-        descs = [True] * len(psms_info)
+        desc = True
 
     if using_best_feat:
         logging.warning(
@@ -217,16 +216,7 @@ def brew(
             "using the original model."
         )
 
-    LOGGER.info("")
-    res = [
-        assign_confidence(p, s, eval_fdr=test_fdr, desc=d)
-        for p, s, d in zip([psms_info], scores, descs)
-    ]
-
-    if len(res) == 1:
-        return res[0], models
-
-    return res, models
+    return psms_info, models, scores[0], desc
 
 
 # Utility Functions -----------------------------------------------------------

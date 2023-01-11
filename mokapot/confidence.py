@@ -16,6 +16,7 @@ We recommend using the :py:func:`~mokapot.brew()` function or the
 confidence estimates, rather than initializing the classes below directly.
 """
 import os
+from pathlib import Path
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -51,16 +52,44 @@ class GroupedConfidence:
     eval_fdr : float
         The FDR threshold at which to report performance. This parameter
         has no affect on the analysis itself, only logging messages.
-
+    dest_dir : str or None, optional
+        The directory in which to save the files. :code:`None` will use the
+        current working directory.
+    file_root : str or None, optional
+        An optional prefix for the confidence estimate files. The suffix will
+        always be "{level}.txt" where "{level}" indicates the level at
+        which confidence estimation was performed (i.e. PSMs, peptides,
+        proteins).
+    sep : str, optional
+        The delimiter to use.
+    decoys : bool, optional
+        Save decoys confidence estimates as well?
+    combine : bool, optional
+            Should groups be combined into a single file?
     Attributes
     ----------
     groups: List
     group_confidence_estimates: Dict
     """
 
-    def __init__(self, psms_info, scores, desc=True, eval_fdr=0.01):
+    def __init__(
+        self,
+        psms_info,
+        scores,
+        desc=True,
+        eval_fdr=0.01,
+        decoys=False,
+        dest_dir=None,
+        file_root=None,
+        sep="\t",
+        combine=False,
+    ):
         """Initialize a GroupedConfidence object"""
-        psms = read_file(psms_info["file"][0])
+        psms = read_file(
+            psms_info["file"][0],
+            use_cols=list(psms_info["feature_columns"])
+            + list(psms_info["metadata_columns"]),
+        )
         self.group_column = psms_info["group_column"]
         psms_info["group_column"] = None
         scores = scores * (desc * 2 - 1)
@@ -84,13 +113,18 @@ class GroupedConfidence:
             group_scores = scores.loc[group_psms.index].values + 1
             psms_info["file"] = ["group_psms.csv"]
             group_psms.to_csv(psms_info["file"][0], sep="\t", index=False)
-            res = assign_confidence(
+            assign_confidence(
                 psms_info,
                 group_scores * (2 * desc - 1),
                 desc=desc,
                 eval_fdr=eval_fdr,
+                dest_dir=dest_dir,
+                file_root=file_root,
+                sep=sep,
+                decoys=decoys,
+                group_column=group,
+                combine=combine,
             )
-            self._group_confidence_estimates[group] = res
 
     @property
     def group_confidence_estimates(self):
@@ -207,6 +241,11 @@ class Confidence:
         self._metadata_column = psms_info["metadata_columns"]
         self._has_proteins = psms_info["has_proteins"]
 
+        self.scores = None
+        self.targets = None
+        self.qvals = None
+        self.peps = None
+
         if self._has_proteins:
             self._proteins = self._has_proteins
         else:
@@ -228,11 +267,14 @@ class Confidence:
         """
         return list(self.confidence_estimates.keys())
 
-    def to_txt(self, dest_dir=None, file_root=None, sep="\t", decoys=False):
+    def to_txt(self, data_path, level, decoys, file_root, dest_dir, sep):
         """Save confidence estimates to delimited text files.
-
         Parameters
         ----------
+        data_path : Path
+            File of unique psms or peptides.
+        level : str
+            the level at which confidence estimation was performed
         dest_dir : str or None, optional
             The directory in which to save the files. `None` will use the
             current working directory.
@@ -252,13 +294,67 @@ class Confidence:
             The paths to the saved files.
 
         """
-        return to_txt(
-            self,
-            dest_dir=dest_dir,
-            file_root=file_root,
-            sep=sep,
-            decoys=decoys,
+
+        reader = read_file_in_chunks(
+            file=data_path,
+            chunk_size=CONFIDENCE_CHUNK_SIZE,
+            use_cols=["ScanNr", "Peptide", "Proteins"],
         )
+
+        self.scores = utils.create_chunks(
+            self.scores, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.qvals = utils.create_chunks(
+            self.qvals, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.peps = utils.create_chunks(
+            self.peps, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+        self.targets = utils.create_chunks(
+            self.targets, chunk_size=CONFIDENCE_CHUNK_SIZE
+        )
+
+        output_columns = sep.join(
+            [
+                "PSMId",
+                "Peptide",
+                "score",
+                "q-value",
+                "posterior_error_prob",
+                "proteinIds",
+                "\n",
+            ]
+        )
+        if file_root is not None:
+            dest_dir = Path(dest_dir, file_root)
+        outfile_t = str(dest_dir) + f"targets.{level}"
+        outfile_d = str(dest_dir) + f"decoys.{level}"
+        if not os.path.exists(outfile_t):
+            with open(outfile_t, "w") as fp:
+                fp.write(output_columns)
+        if decoys and not os.path.exists(outfile_d):
+            with open(outfile_d, "w") as fp:
+                fp.write(output_columns)
+
+        for data_in, score_in, qvals_in, pep_in, target_in in zip(
+            reader, self.scores, self.qvals, self.peps, self.targets
+        ):
+            data_in = data_in.apply(pd.to_numeric, errors="ignore")
+            data_in["score"] = score_in
+            data_in["qvals"] = qvals_in
+            data_in["PEP"] = pep_in
+            if level != "proteins" and self._protein_column is not None:
+                data_in[self._protein_column] = data_in.pop(
+                    self._protein_column
+                )
+            data_in.loc[target_in, :].to_csv(
+                outfile_t, sep=sep, index=False, mode="a", header=None
+            )
+            if decoys:
+                data_in.loc[~target_in, :].to_csv(
+                    outfile_d, sep=sep, index=False, mode="a", header=None
+                )
+        os.remove(data_path)
 
     def _perform_tdc(self, psms, psm_columns):
         """Perform target-decoy competition.
@@ -327,14 +423,24 @@ class LinearConfidence(Confidence):
     eval_fdr : float
         The FDR threshold at which to report performance. This parameter
         has no affect on the analysis itself, only logging messages.
+    dest_dir : str or None, optional
+        The directory in which to save the files. :code:`None` will use the
+        current working directory.
+    file_root : str or None, optional
+        An optional prefix for the confidence estimate files. The suffix will
+        always be "{level}.txt" where "{level}" indicates the level at
+        which confidence estimation was performed (i.e. PSMs, peptides,
+        proteins).
+    sep : str, optional
+        The delimiter to use.
+    decoys : bool, optional
+        Save decoys confidence estimates as well?
+    combine : bool, optional
+            Should groups be combined into a single file?
+    group_column : str, optional
+        A factor to by which to group PSMs for grouped confidence
+        estimation.
 
-    Attributes
-    ----------
-    levels : list of str
-    confidence_estimates : Dict[str, pandas.DataFrame]
-        A dictionary of confidence estimates at each level.
-    decoy_confidence_estimates : Dict[str, pandas.DataFrame]
-        A dictionary of confidence estimates for the decoys at each level.
     """
 
     def __init__(
@@ -344,6 +450,12 @@ class LinearConfidence(Confidence):
         peptides_path,
         desc=True,
         eval_fdr=0.01,
+        dest_dir=None,
+        file_root=None,
+        decoys=None,
+        sep="\t",
+        group_column=None,
+        combine=False,
     ):
         """Initialize a a LinearPsmConfidence object"""
         super().__init__(psms_info)
@@ -359,7 +471,17 @@ class LinearConfidence(Confidence):
             "+".join(self._psm_columns),
         )
 
-        self._assign_confidence(psms_path, peptides_path, desc=desc)
+        self._assign_confidence(
+            psms_path,
+            peptides_path,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            decoys=decoys,
+            sep=sep,
+            group_column=group_column,
+            combine=combine,
+        )
 
         self.accepted = {}
         for level in self.levels:
@@ -390,7 +512,18 @@ class LinearConfidence(Confidence):
         else:
             return None
 
-    def _assign_confidence(self, psms_path, peptides_path, desc=True):
+    def _assign_confidence(
+        self,
+        psms_path,
+        peptides_path,
+        desc=True,
+        decoys=False,
+        file_root=None,
+        dest_dir=None,
+        sep="\t",
+        group_column=None,
+        combine=False,
+    ):
         """
         Assign confidence to PSMs and peptides.
 
@@ -402,6 +535,23 @@ class LinearConfidence(Confidence):
             File with unique peptides.
         desc : bool
             Are higher scores better?
+        dest_dir : str or None, optional
+            The directory in which to save the files. :code:`None` will use the
+            current working directory.
+        file_root : str or None, optional
+            An optional prefix for the confidence estimate files. The suffix will
+            always be "{level}.txt" where "{level}" indicates the level at
+            which confidence estimation was performed (i.e. PSMs, peptides,
+            proteins).
+        sep : str, optional
+            The delimiter to use.
+        decoys : bool, optional
+            Save decoys confidence estimates as well?
+        combine : bool, optional
+                Should groups be combined into a single file?
+        group_column : str, optional
+            A factor to by which to group PSMs for grouped confidence
+            estimation.
         """
         levels = ["PSMs", "peptides"]
         level_data_path = [psms_path, peptides_path]
@@ -421,7 +571,7 @@ class LinearConfidence(Confidence):
                 self._proteins,
             )
             proteins_path = "proteins.csv"
-            proteins.to_csv(proteins_path, index=False, sep="\t")
+            proteins.to_csv(proteins_path, index=False, sep=sep)
             levels += ["proteins"]
             level_data_path += [proteins_path]
             LOGGER.info("\t- Found %i unique protein groups.", len(proteins))
@@ -434,9 +584,9 @@ class LinearConfidence(Confidence):
             convert_targets_column(
                 data=data, target_column=self._target_column
             )
-            scores = data.loc[:, self._score_column].values
-            targets = data.loc[:, self._target_column].astype(bool).values
-            if all(targets):
+            self.scores = data.loc[:, self._score_column].values
+            self.targets = data.loc[:, self._target_column].astype(bool).values
+            if all(self.targets):
                 LOGGER.warning(
                     "No decoy PSMs remain for confidence estimation. "
                     "Confidence estimates may be unreliable."
@@ -444,14 +594,14 @@ class LinearConfidence(Confidence):
 
             # Estimate q-values and assign to dataframe
             LOGGER.info("Assiging q-values to %s...", level)
-            data["q-value"] = qvalues.tdc(scores, targets, desc=True)
+            self.qvals = qvalues.tdc(self.scores, self.targets, desc=True)
 
             # Set scores to be the correct sign again:
-            data["score"] = data["score"] * (desc * 2 - 1)
+            self.scores = self.scores * (desc * 2 - 1)
             # Logging update on q-values
             LOGGER.info(
                 "\t- Found %i %s with q<=%g",
-                (data.loc[targets, "q-value"] <= self._eval_fdr).sum(),
+                (self.qvals[self.targets] <= self._eval_fdr).sum(),
                 level,
                 self._eval_fdr,
             )
@@ -459,25 +609,27 @@ class LinearConfidence(Confidence):
             # Calculate PEPs
             LOGGER.info("Assiging PEPs to %s...", level)
             try:
-                _, pep = qvality.getQvaluesFromScores(
-                    scores[targets], scores[~targets], includeDecoys=True
+                _, self.peps = qvality.getQvaluesFromScores(
+                    self.scores[self.targets],
+                    self.scores[~self.targets],
+                    includeDecoys=True,
                 )
             except SystemExit as msg:
                 if "no decoy hits available for PEP calculation" in str(msg):
-                    pep = 0
+                    self.peps = 0
                 else:
                     raise
 
-            level = level.lower()
-            data["PEP"] = pep
-            if level != "proteins" and self._protein_column is not None:
-                data[self._protein_column] = data.pop(self._protein_column)
-            self.confidence_estimates[level] = data.loc[targets, :]
-            self.decoy_confidence_estimates[level] = data.loc[~targets, :]
-
-        if "proteins" not in self.confidence_estimates.keys():
-            self.confidence_estimates["proteins"] = None
-            self.decoy_confidence_estimates["proteins"] = None
+            logging.info(f"Writing {level} results...")
+            if group_column and not combine:
+                file_root = f"{group_column}."
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
+            else:
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
 
     def to_flashlfq(self, out_file="mokapot.flashlfq.txt"):
         """Save confidenct peptides for quantification with FlashLFQ.
@@ -542,6 +694,12 @@ class CrossLinkedConfidence(Confidence):
         psms_path,
         peptides_path,
         desc=True,
+        dest_dir=None,
+        file_root=None,
+        decoys=None,
+        sep="\t",
+        group_column=None,
+        combine=False,
     ):
         """Initialize a CrossLinkedConfidence object"""
         super().__init__(psms_info)
@@ -549,9 +707,30 @@ class CrossLinkedConfidence(Confidence):
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
 
-        self._assign_confidence(psms_path, peptides_path, desc=desc)
+        self._assign_confidence(
+            psms_path,
+            peptides_path,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            decoys=decoys,
+            sep=sep,
+            group_column=group_column,
+            combine=combine,
+        )
 
-    def _assign_confidence(self, psms_path, peptides_path, desc=True):
+    def _assign_confidence(
+        self,
+        psms_path,
+        peptides_path,
+        desc=True,
+        decoys=False,
+        file_root=None,
+        dest_dir=None,
+        sep="\t",
+        group_column=None,
+        combine=False,
+    ):
         """
         Assign confidence to PSMs and peptides.
 
@@ -563,6 +742,23 @@ class CrossLinkedConfidence(Confidence):
             File with unique peptides.
         desc : bool
             Are higher scores better?
+        dest_dir : str or None, optional
+            The directory in which to save the files. :code:`None` will use the
+            current working directory.
+        file_root : str or None, optional
+            An optional prefix for the confidence estimate files. The suffix will
+            always be "{level}.txt" where "{level}" indicates the level at
+            which confidence estimation was performed (i.e. PSMs, peptides,
+            proteins).
+        sep : str, optional
+            The delimiter to use.
+        decoys : bool, optional
+            Save decoys confidence estimates as well?
+        combine : bool, optional
+                Should groups be combined into a single file?
+        group_column : str, optional
+            A factor to by which to group PSMs for grouped confidence
+            estimation.
         """
 
         levels = ("csms", "peptide_pairs")
@@ -575,25 +771,23 @@ class CrossLinkedConfidence(Confidence):
             convert_targets_column(
                 data=data, target_column=self._target_column
             )
-            scores = data.loc[:, self._score_column].values
-            targets = data.loc[:, self._target_column].astype(bool).values
-            data["mokapot q-value"] = qvalues.crosslink_tdc(
-                scores, targets, desc
-            )
+            self.scores = data.loc[:, self._score_column].values
+            self.targets = data.loc[:, self._target_column].astype(bool).values
+            self.qvals = qvalues.crosslink_tdc(self.scores, self.targets, desc)
 
-            data = (
-                data.loc[targets, :]
-                .sort_values(self._score_column, ascending=(not desc))
-                .reset_index(drop=True)
-                .drop(self._target_column, axis=1)
-                .rename(columns={self._score_column: "mokapot score"})
+            _, self.peps = qvality.getQvaluesFromScores(
+                self.scores[self.targets == 2], self.scores[~self.targets]
             )
-
-            _, pep = qvality.getQvaluesFromScores(
-                scores[targets == 2], scores[~targets]
-            )
-            data["mokapot PEP"] = pep
-            self._confidence_estimates[level] = data
+            logging.info(f"Writing {level} results...")
+            if group_column and not combine:
+                file_root = f"{group_column}."
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
+            else:
+                self.to_txt(
+                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                )
 
 
 # Functions -------------------------------------------------------------------
@@ -602,6 +796,12 @@ def assign_confidence(
     scores=None,
     desc=True,
     eval_fdr=0.01,
+    dest_dir=None,
+    file_root=None,
+    sep="\t",
+    decoys=False,
+    group_column=None,
+    combine=False,
 ):
     """Assign confidence to PSMs peptides, and optionally, proteins.
 
@@ -620,6 +820,23 @@ def assign_confidence(
         `scores` is not :code:`None`, this parameter has no affect on the
         analysis itself, but does affect logging messages and the FDR
         threshold applied for some output formats, such as FlashLFQ.
+    dest_dir : str or None, optional
+        The directory in which to save the files. :code:`None` will use the
+        current working directory.
+    file_root : str or None, optional
+        An optional prefix for the confidence estimate files. The suffix will
+        always be "{level}.txt" where "{level}" indicates the level at
+        which confidence estimation was performed (i.e. PSMs, peptides,
+        proteins).
+    sep : str, optional
+        The delimiter to use.
+    decoys : bool, optional
+        Save decoys confidence estimates as well?
+    combine : bool, optional
+            Should groups be combined into a single file?
+    group_column : str, optional
+        A factor to by which to group PSMs for grouped confidence
+        estimation.
 
     Returns
     -------
@@ -652,7 +869,7 @@ def assign_confidence(
             chunk_metadata["score"] = score_chunk
             chunk_metadata.to_csv(
                 "scores_metadata.csv",
-                sep="\t",
+                sep=sep,
                 index=False,
                 mode="a",
                 header=None,
@@ -661,7 +878,7 @@ def assign_confidence(
         psms_path = "psms.csv"
         peptides_path = "peptides.csv"
         iterable_sorted = utils.sort_file_on_disk(
-            file_path=scores_metadata_path, sort_key=-1, sep="\t", reverse=True
+            file_path=scores_metadata_path, sort_key=-1, sep=sep, reverse=True
         )
         LOGGER.info("Assigning confidence...")
         LOGGER.info("Performing target-decoy competition...")
@@ -670,15 +887,15 @@ def assign_confidence(
             "+".join(psms_info["spectrum_columns"]),
         )
         with open(psms_path, "w") as f_psm:
-            f_psm.write("\t".join(metadata_columns + ["score", "\n"]))
+            f_psm.write(sep.join(metadata_columns + ["score", "\n"]))
         with open(peptides_path, "w") as f_peptide:
-            f_peptide.write("\t".join(metadata_columns + ["score", "\n"]))
+            f_peptide.write(sep.join(metadata_columns + ["score", "\n"]))
 
         unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
             iterable=iterable_sorted,
             out_psms="psms.csv",
             out_peptides="peptides.csv",
-            sep="\t",
+            sep=sep,
         )
         os.remove(scores_metadata_path)
         LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
@@ -690,11 +907,25 @@ def assign_confidence(
             peptides_path=peptides_path,
             eval_fdr=eval_fdr,
             desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            sep=sep,
+            decoys=decoys,
+            group_column=group_column,
+            combine=combine,
         )
     else:
         LOGGER.info("Assigning confidence within groups...")
         return GroupedConfidence(
-            psms_info, scores, eval_fdr=eval_fdr, desc=desc
+            psms_info,
+            scores,
+            eval_fdr=eval_fdr,
+            desc=desc,
+            dest_dir=dest_dir,
+            file_root=file_root,
+            sep=sep,
+            decoys=decoys,
+            combine=combine,
         )
 
 
