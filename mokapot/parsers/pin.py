@@ -18,8 +18,7 @@ LOGGER = logging.getLogger(__name__)
 
 # Functions -------------------------------------------------------------------
 def read_pin(
-    pin_files,
-    has_proteins=None,
+    pin_file,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -98,25 +97,20 @@ def read_pin(
         PSMs from all of the PIN files.
     """
     logging.info("Parsing PSMs...")
-    return [
-        read_percolator(
-            file,
-            has_proteins=has_proteins,
-            group_column=group_column,
-            filename_column=filename_column,
-            calcmass_column=calcmass_column,
-            expmass_column=expmass_column,
-            rt_column=rt_column,
-            charge_column=charge_column,
-            copy_data=copy_data,
-        )
-        for file in utils.tuplize(pin_files)
-    ]
+    return read_percolator(
+        pin_file,
+        group_column=group_column,
+        filename_column=filename_column,
+        calcmass_column=calcmass_column,
+        expmass_column=expmass_column,
+        rt_column=rt_column,
+        charge_column=charge_column,
+        copy_data=copy_data,
+    )
 
 
 def read_percolator(
     perc_file,
-    has_proteins=None,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -232,7 +226,6 @@ def read_percolator(
         "expmass_column": expmass,
         "rt_column": ret_time,
         "charge_column": charge,
-        "has_proteins": has_proteins,
     }
 
 
@@ -334,14 +327,15 @@ def parse_in_chunks(psms_info, idx, chunk_size):
         list of dataframes
     """
     train_psms = [[] for _ in range(len(idx))]
-    for file in psms_info["file"]:
-        reader = read_file_in_chunks(
-            file=file, chunk_size=chunk_size, use_cols=psms_info["columns"]
-        )
-        Parallel(n_jobs=-1, require="sharedmem")(
-            delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
-            for chunk in reader
-        )
+    reader = read_file_in_chunks(
+        file=psms_info["file"],
+        chunk_size=chunk_size,
+        use_cols=psms_info["columns"],
+    )
+    Parallel(n_jobs=-1, require="sharedmem")(
+        delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
+        for chunk in reader
+    )
 
     return Parallel(n_jobs=-1, require="sharedmem")(
         delayed(concat_chunks)(df=df, orig_idx=orig_idx)

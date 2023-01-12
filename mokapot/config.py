@@ -48,7 +48,6 @@ def _parser():
     parser.add_argument(
         "psm_files",
         type=str,
-        nargs="+",
         help=(
             "A collection of PSMs in the Percolator tab-delimited or PepXML "
             "format."
@@ -206,20 +205,6 @@ def _parser():
             "direction for ranking PSMs. The default "
             "automatically selects the feature that finds "
             "the most PSMs below the `train_fdr`."
-        ),
-    )
-
-    parser.add_argument(
-        "--aggregate",
-        default=False,
-        action="store_true",
-        help=(
-            "If used, PSMs from multiple PIN files will be "
-            "aggregated and analyzed together. Otherwise, "
-            "a joint model will be trained, but confidence "
-            "estimates will be calculated separately for "
-            "each PIN file. This flag only has an effect "
-            "when multiple PIN files are provided."
         ),
     )
 

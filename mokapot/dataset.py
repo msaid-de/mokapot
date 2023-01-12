@@ -624,16 +624,10 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
 
 
 def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
-    df = pd.concat(
-        [
-            read_file(
-                file_name=file, use_cols=columns + [psms_info["target_column"]]
-            )
-            for file in psms_info["file"]
-        ],
-        ignore_index=True,
+    df = read_file(
+        file_name=psms_info["file"],
+        use_cols=columns + [psms_info["target_column"]],
     )
-
     return (
         df.loc[:, columns].apply(
             _update_labels,
@@ -668,16 +662,11 @@ def find_best_feature(psms_info, eval_fdr):
         if num_passing > best_positives:
             best_positives = num_passing
             best_feat = feat_idx
-            df = pd.concat(
-                [
-                    read_file(
-                        file_name=file,
-                        use_cols=[best_feat, psms_info["target_column"]],
-                    )
-                    for file in psms_info["file"]
-                ],
-                ignore_index=True,
+            df = read_file(
+                file_name=psms_info["file"],
+                use_cols=[best_feat, psms_info["target_column"]],
             )
+
             new_labels = _update_labels(
                 scores=df.loc[:, best_feat],
                 targets=df[psms_info["target_column"]],
@@ -693,12 +682,8 @@ def find_best_feature(psms_info, eval_fdr):
 
 
 def update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
-    df = pd.concat(
-        [
-            read_file(file_name=_file, use_cols=[psms_info["target_column"]])
-            for _file in psms_info["file"]
-        ],
-        ignore_index=True,
+    df = read_file(
+        file_name=psms_info["file"], use_cols=[psms_info["target_column"]]
     )
     return _update_labels(
         scores=scores,

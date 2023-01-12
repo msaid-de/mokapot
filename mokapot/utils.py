@@ -83,10 +83,14 @@ def get_unique_psms_and_peptides(iterable, out_psms, out_peptides, sep):
         line_hash_peptide = line_list[4]
         if line_hash_psm not in seen_psm:
             seen_psm.add(line_hash_psm)
-            f_psm.write(f"{line}\n")
+            f_psm.write(
+                f"{sep.join([line_list[0], line_list[1], line_list[-3], line_list[-2], line_list[-1]])}\n"
+            )
             if line_hash_peptide not in seen_peptide:
                 seen_peptide.add(line_hash_peptide)
-                f_peptide.write(f"{line}\n")
+                f_peptide.write(
+                    f"{sep.join([line_list[0], line_list[1], line_list[-3], line_list[-2], line_list[-1]])}\n"
+                )
     f_psm.close()
     f_peptide.close()
     return [len(seen_psm), len(seen_peptide)]
