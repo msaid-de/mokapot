@@ -112,7 +112,7 @@ class GroupedConfidence:
             tdc_winners = group_df.index.intersection(idx)
             group_psms = group_df.loc[tdc_winners, :]
             group_scores = scores.loc[group_psms.index].values + 1
-            psms_info["file"] = ["group_psms.csv"]
+            psms_info["file"] = "group_psms.csv"
             group_psms.to_csv(psms_info["file"], sep="\t", index=False)
             assign_confidence(
                 psms_info,
@@ -239,7 +239,8 @@ class Confidence:
         """Initialize a PsmConfidence object."""
         self._score_column = "score"
         self._target_column = psms_info["target_column"]
-        self._protein_column = psms_info["protein_column"]
+        self._protein_column = "proteinIds"
+        self._group_column = psms_info["group_column"]
         self._metadata_column = psms_info["metadata_columns"]
 
         self.scores = None
@@ -266,7 +267,9 @@ class Confidence:
         """
         return list(self.confidence_estimates.keys())
 
-    def to_txt(self, data_path, level, decoys, file_root, dest_dir, sep):
+    def to_txt(
+        self, data_path, columns, level, decoys, file_root, dest_dir, sep
+    ):
         """Save confidence estimates to delimited text files.
         Parameters
         ----------
@@ -293,43 +296,10 @@ class Confidence:
             The paths to the saved files.
 
         """
-        if level == "proteins":
-            intput_columns = [
-                "mokapot protein group",
-                "best peptide",
-                "stripped sequence",
-                "score",
-                "Label",
-            ]
-            output_columns = sep.join(
-                [
-                    "mokapot protein group",
-                    "best peptide",
-                    "stripped sequence",
-                    "score",
-                    "q-value",
-                    "posterior_error_prob",
-                    "proteinIds",
-                    "\n",
-                ]
-            )
-        else:
-            intput_columns = ["ScanNr", "Peptide", "Proteins"]
-            output_columns = sep.join(
-                [
-                    "PSMId",
-                    "Peptide",
-                    "score",
-                    "q-value",
-                    "posterior_error_prob",
-                    "proteinIds",
-                    "\n",
-                ]
-            )
         reader = read_file_in_chunks(
             file=data_path,
             chunk_size=CONFIDENCE_CHUNK_SIZE,
-            use_cols=intput_columns,
+            use_cols=[i for i in columns if i != self._target_column],
         )
 
         self.scores = utils.create_chunks(
@@ -349,12 +319,18 @@ class Confidence:
             dest_dir = Path(dest_dir, file_root)
         outfile_t = str(dest_dir) + f"targets.{level}"
         outfile_d = str(dest_dir) + f"decoys.{level}"
+
+        columns.remove(self._target_column)
+        output_columns = columns + ["q-value", "posterior_error_prob"]
+        if level != "proteins" and self._protein_column is not None:
+            output_columns.remove(self._protein_column)
+            output_columns.append(self._protein_column)
         if not os.path.exists(outfile_t):
             with open(outfile_t, "w") as fp:
-                fp.write(output_columns)
+                fp.write(f"{sep.join(output_columns)}\n")
         if decoys and not os.path.exists(outfile_d):
             with open(outfile_d, "w") as fp:
-                fp.write(output_columns)
+                fp.write(f"{sep.join(output_columns)}\n")
 
         for data_in, score_in, qvals_in, pep_in, target_in in zip(
             reader, self.scores, self.qvals, self.peps, self.targets
@@ -483,7 +459,7 @@ class LinearConfidence(Confidence):
         self._target_column = psms_info["target_column"]
         self._psm_columns = psms_info["spectrum_columns"]
         self._peptide_column = psms_info["peptide_column"]
-        self._protein_column = psms_info["protein_column"]
+        self._protein_column = "proteinIds"
         self._eval_fdr = eval_fdr
 
         LOGGER.info("Performing target-decoy competition...")
@@ -577,9 +553,7 @@ class LinearConfidence(Confidence):
         levels = ["PSMs", "peptides"]
         level_data_path = [psms_path, peptides_path]
         if self._proteins:
-            data = read_file(
-                peptides_path, use_cols=self._metadata_column + ["score"]
-            )
+            data = read_file(peptides_path)
             data = data.apply(pd.to_numeric, errors="ignore")
             convert_targets_column(
                 data=data, target_column=self._target_column
@@ -598,23 +572,15 @@ class LinearConfidence(Confidence):
             LOGGER.info("\t- Found %i unique protein groups.", len(proteins))
 
         for level, data_path in zip(levels, level_data_path):
-            if level == "proteins":
-                usecols = [
-                    "mokapot protein group",
-                    "best peptide",
-                    "stripped sequence",
-                    "score",
-                    "Label",
-                ]
-            else:
-                usecols = self._metadata_column + ["score"]
-            data = read_file(data_path, use_cols=usecols)
+            data = read_file(data_path)
             data = data.apply(pd.to_numeric, errors="ignore")
+            data_columns = list(data.columns)
             convert_targets_column(
                 data=data, target_column=self._target_column
             )
             self.scores = data.loc[:, self._score_column].values
             self.targets = data.loc[:, self._target_column].astype(bool).values
+            del data
             if all(self.targets):
                 LOGGER.warning(
                     "No decoy PSMs remain for confidence estimation. "
@@ -653,11 +619,23 @@ class LinearConfidence(Confidence):
             if group_column and not combine:
                 file_root = f"{group_column}."
                 self.to_txt(
-                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                    data_path,
+                    data_columns,
+                    level.lower(),
+                    decoys,
+                    file_root,
+                    dest_dir,
+                    sep,
                 )
             else:
                 self.to_txt(
-                    data_path, level.lower(), decoys, file_root, dest_dir, sep
+                    data_path,
+                    data_columns,
+                    level.lower(),
+                    decoys,
+                    file_root,
+                    dest_dir,
+                    sep,
                 )
 
     def to_flashlfq(self, out_file="mokapot.flashlfq.txt"):
@@ -898,7 +876,6 @@ def assign_confidence(
                 mode="a",
                 header=None,
             )
-            metadata_columns = list(chunk_metadata.columns)
         psms_path = "psms.csv"
         peptides_path = "peptides.csv"
         iterable_sorted = utils.sort_file_on_disk(
@@ -910,10 +887,11 @@ def assign_confidence(
             "Keeping the best match per %s columns...",
             "+".join(psms_info["spectrum_columns"]),
         )
+        metadata_columns = ["PSMId", "Label", "Peptide", "proteinIds", "score"]
         with open(psms_path, "w") as f_psm:
-            f_psm.write(sep.join(metadata_columns + ["score", "\n"]))
+            f_psm.write(f"{sep.join(metadata_columns)}\n")
         with open(peptides_path, "w") as f_peptide:
-            f_peptide.write(sep.join(metadata_columns + ["score", "\n"]))
+            f_peptide.write(f"{sep.join(metadata_columns)}\n")
 
         unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
             iterable=iterable_sorted,
