@@ -16,11 +16,13 @@ We recommend using the :py:func:`~mokapot.brew()` function or the
 confidence estimates, rather than initializing the classes below directly.
 """
 import os
+import glob
 from pathlib import Path
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 from triqler import qvality
+from joblib import Parallel, delayed
 
 from . import qvalues
 from . import utils
@@ -866,20 +868,21 @@ def assign_confidence(
         scores_slices = utils.create_chunks(
             scores, chunk_size=CONFIDENCE_CHUNK_SIZE
         )
-        scores_metadata_path = "scores_metadata.csv"
-        for chunk_metadata, score_chunk in zip(reader, scores_slices):
-            chunk_metadata["score"] = score_chunk
-            chunk_metadata.to_csv(
-                "scores_metadata.csv",
-                sep=sep,
-                index=False,
-                mode="a",
-                header=None,
+
+        Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(save_sorted_metadata_chunks)(
+                chunk_metadata, score_chunk, i, sep
             )
+            for chunk_metadata, score_chunk, i in zip(
+                reader, scores_slices, range(len(scores_slices))
+            )
+        )
+
         psms_path = "psms.csv"
         peptides_path = "peptides.csv"
-        iterable_sorted = utils.sort_file_on_disk(
-            file_path=scores_metadata_path, sort_key=-1, sep=sep, reverse=True
+        scores_metadata_paths = glob.glob("scores_metadata_*")
+        iterable_sorted = utils.merge_sort(
+            scores_metadata_paths, col_score="score", sep=sep
         )
         LOGGER.info("Assigning confidence...")
         LOGGER.info("Performing target-decoy competition...")
@@ -899,7 +902,7 @@ def assign_confidence(
             out_peptides="peptides.csv",
             sep=sep,
         )
-        os.remove(scores_metadata_path)
+        [os.remove(sc_path) for sc_path in scores_metadata_paths]
         LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
         LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
 
@@ -931,6 +934,17 @@ def assign_confidence(
             proteins=proteins,
             combine=combine,
         )
+
+
+def save_sorted_metadata_chunks(chunk_metadata, score_chunk, i, sep):
+    chunk_metadata["score"] = score_chunk
+    chunk_metadata.sort_values(by="score", ascending=False, inplace=True)
+    chunk_metadata.to_csv(
+        f"scores_metadata_{i}.csv",
+        sep=sep,
+        index=False,
+        mode="w",
+    )
 
 
 def plot_qvalues(qvalues, threshold=0.1, ax=None, **kwargs):
