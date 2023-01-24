@@ -871,7 +871,7 @@ def assign_confidence(
 
         Parallel(n_jobs=-1, require="sharedmem")(
             delayed(save_sorted_metadata_chunks)(
-                chunk_metadata, score_chunk, i, sep
+                chunk_metadata, score_chunk, psms_info, i, sep
             )
             for chunk_metadata, score_chunk, i in zip(
                 reader, scores_slices, range(len(scores_slices))
@@ -936,9 +936,14 @@ def assign_confidence(
         )
 
 
-def save_sorted_metadata_chunks(chunk_metadata, score_chunk, i, sep):
+def save_sorted_metadata_chunks(
+    chunk_metadata, score_chunk, psms_info, i, sep
+):
     chunk_metadata["score"] = score_chunk
     chunk_metadata.sort_values(by="score", ascending=False, inplace=True)
+    chunk_metadata = chunk_metadata.drop_duplicates(
+        psms_info["spectrum_columns"]
+    )
     chunk_metadata.to_csv(
         f"scores_metadata_{i}.csv",
         sep=sep,
