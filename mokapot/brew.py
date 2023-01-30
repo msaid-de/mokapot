@@ -11,9 +11,13 @@ from joblib import Parallel, delayed
 from .model import PercolatorModel
 from . import utils
 from .dataset import LinearPsmDataset, calibrate_scores, update_labels
-from .parsers.pin import read_file, parse_in_chunks, convert_targets_column
+from .parsers.pin import (
+    read_file,
+    parse_in_chunks,
+    convert_targets_column,
+    read_file_in_chunks,
+)
 from .constants import (
-    CHUNK_SIZE_THREAD_PREDICTION,
     CHUNK_SIZE_ROWS_PREDICTION,
     CHUNK_SIZE_READ_ALL_DATA,
 )
@@ -121,7 +125,7 @@ def brew(
         idx=train_sets,
         chunk_size=CHUNK_SIZE_READ_ALL_DATA,
     )
-
+    del train_sets
     if type(model) is list:
         models = [[m, False] for m in model]
     else:
@@ -136,6 +140,11 @@ def brew(
     models.sort(key=lambda x: x[0].estimator.intercept_)
     # Determine if the models need to be reset:
     reset = any([m[1] for m in models])
+    model_test_idx = [[i] * len(idx) for i, idx in enumerate(test_idx)]
+    rev_idx = np.argsort(sum(test_idx, [])).tolist()
+    del test_idx
+    model_idx = np.concatenate(model_test_idx)[rev_idx]
+    del rev_idx
     if reset:
         # If we reset, just use the original model on all the folds:
         scores = [
@@ -144,7 +153,7 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        scores = _predict(test_idx, psms_info, models, test_fdr)
+        scores = _predict(model_idx, psms_info, models, test_fdr)
     else:
         # If model training has failed
         scores = np.zeros(data_size)
@@ -299,7 +308,17 @@ def _create_psms(psms_info, data, enforce_checks=True):
     )
 
 
-def _predict(test_idx, psms_info, models, test_fdr):
+def get_index_values(df, col_name, val, orig_idx):
+    df = df[df[col_name] == val].drop(col_name, axis=1)
+    orig_idx[val] += list(df.index)
+    return df
+
+
+def predict_fold(model, fold, psms, scores):
+    scores[fold].append(model.predict(psms))
+
+
+def _predict(models_idx, psms_info, models, test_fdr):
     """
     Return the new scores for the dataset
 
@@ -315,53 +334,65 @@ def _predict(test_idx, psms_info, models, test_fdr):
     test_fdr : the fdr to calibrate at.
     """
     scores = []
-    for fold_idx, mod in zip(test_idx, models):
-        index_slices = utils.create_chunks(
-            data=fold_idx, chunk_size=CHUNK_SIZE_ROWS_PREDICTION
+
+    model_test_idx = utils.create_chunks(
+        data=models_idx, chunk_size=CHUNK_SIZE_ROWS_PREDICTION
+    )
+    n_folds = len(models)
+    fold_scores = [[] for _ in range(n_folds)]
+    targets = [[] for _ in range(n_folds)]
+    orig_idx = [[] for _ in range(n_folds)]
+    reader = read_file_in_chunks(
+        file=psms_info["file"],
+        chunk_size=CHUNK_SIZE_ROWS_PREDICTION,
+        use_cols=psms_info["columns"],
+    )
+    for i, psms_slice in enumerate(reader):
+        psms_slice["fold"] = model_test_idx.pop(0)
+        psms_slice = [
+            get_index_values(psms_slice, "fold", i, orig_idx)
+            for i in range(n_folds)
+        ]
+        psms_slice = [
+            _create_psms(psms_info, psm_slice, enforce_checks=False)
+            for psm_slice in psms_slice
+        ]
+        [
+            targets[i].append(psm_slice.targets)
+            for i, psm_slice in enumerate(psms_slice)
+        ]
+
+        Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(predict_fold)(
+                model=models[mod_idx], fold=mod_idx, psms=p, scores=fold_scores
+            )
+            for mod_idx, p in enumerate(psms_slice)
         )
-        fold_scores = []
-        targets = []
-        del fold_idx
-        for index_slice in index_slices:
-            pred_slices = utils.create_chunks(
-                data=index_slice, chunk_size=CHUNK_SIZE_THREAD_PREDICTION
-            )
-            psms_slice = parse_in_chunks(
-                psms_info=psms_info,
-                idx=pred_slices,
-                chunk_size=CHUNK_SIZE_READ_ALL_DATA,
-            )
-            del pred_slices
-            psms_slice = [
-                _create_psms(psms_info, psm_slice, enforce_checks=False)
-                for psm_slice in psms_slice
-            ]
-            targets = targets + [psm_slice.targets for psm_slice in psms_slice]
-            fold_scores += Parallel(n_jobs=-1, require="sharedmem")(
-                delayed(mod.predict)(psms=p) for p in psms_slice
-            )
-            del psms_slice
+        del psms_slice
+    del reader
+    del model_test_idx
+    for mod in models:
         try:
             mod.estimator.decision_function
             scores.append(
                 calibrate_scores(
-                    np.hstack(fold_scores), np.hstack(targets), test_fdr
+                    np.hstack(fold_scores.pop(0)),
+                    np.hstack(targets.pop(0)),
+                    test_fdr,
                 )
             )
         except AttributeError:
-            scores.append(np.hstack(fold_scores))
+            scores.append(np.hstack(fold_scores.pop(0)))
         except RuntimeError:
             raise RuntimeError(
                 "Failed to calibrate scores between cross-validation folds, "
                 "because no target PSMs could be found below 'test_fdr'. Try "
                 "raising 'test_fdr'."
             )
-        del index_slices
-        del targets
-        del fold_scores
-    rev_idx = np.argsort(sum(test_idx, [])).tolist()
-    del test_idx
-    return np.concatenate(scores)[rev_idx]
+    del targets
+    del fold_scores
+    orig_idx = np.argsort(sum(orig_idx, [])).tolist()
+    return np.concatenate(scores)[orig_idx]
 
 
 def _fit_model(train_set, psms_info, model, fold, seed):
