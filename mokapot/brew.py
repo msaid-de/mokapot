@@ -12,7 +12,6 @@ from .model import PercolatorModel
 from . import utils
 from .dataset import LinearPsmDataset, calibrate_scores, update_labels
 from .parsers.pin import (
-    read_file,
     parse_in_chunks,
     convert_targets_column,
     read_file_in_chunks,
@@ -92,10 +91,9 @@ def brew(
 
     target_column = psms_info["target_column"]
     spectrum_columns = psms_info["spectrum_columns"]
-    df_spectra = read_file(
-        file_name=psms_info["file"],
-        use_cols=spectrum_columns + [target_column],
-    ).apply(pd.to_numeric, errors="ignore")
+    df_spectra = psms_info.pop("spectra_dataframe").apply(
+        pd.to_numeric, errors="ignore"
+    )
     df_spectra = convert_targets_column(df_spectra, target_column)
     data_size = len(df_spectra)
     if data_size > 1:
