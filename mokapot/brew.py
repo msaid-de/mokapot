@@ -105,11 +105,11 @@ def brew(
         )
     df_spectra = df_spectra[spectrum_columns]
     LOGGER.info("Splitting PSMs into %i folds...", folds)
-    test_idx = _split(df_spectra, folds)
+    test_folds_idx = _split(df_spectra, folds)
     del df_spectra
     train_sets = list(
         make_train_sets(
-            test_idx=test_idx,
+            test_idx=test_folds_idx,
             subset_max_train=subset_max_train,
             data_size=data_size,
         )
@@ -135,11 +135,14 @@ def brew(
     models.sort(key=lambda x: x[0].estimator.intercept_)
     # Determine if the models need to be reset:
     reset = any([m[1] for m in models])
-    model_test_idx = [[i] * len(idx) for i, idx in enumerate(test_idx)]
-    rev_idx = np.argsort(sum(test_idx, [])).tolist()
-    del test_idx
-    model_idx = np.concatenate(model_test_idx)[rev_idx]
-    del rev_idx
+
+    # generate model index for each psm in all folds
+    model_to_psm_idx = [[i] * len(idx) for i, idx in enumerate(test_folds_idx)]
+    # sort test indices and model indices in the original order (order of input data)
+    original_order_idx = np.argsort(utils.flatten(test_folds_idx)).tolist()
+    del test_folds_idx
+    model_to_psm_idx = np.concatenate(model_to_psm_idx)[original_order_idx]
+    del original_order_idx
     if reset:
         # If we reset, just use the original model on all the folds:
         scores = [
@@ -148,7 +151,7 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        scores = _predict(model_idx, psms_info, models, test_fdr)
+        scores = _predict(model_to_psm_idx, psms_info, models, test_fdr)
     else:
         # If model training has failed
         scores = np.zeros(data_size)
