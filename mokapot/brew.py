@@ -47,11 +47,8 @@ def brew(
 
     Parameters
     ----------
-    psms : PsmDataset object or list of PsmDataset objects
-        One or more :doc:`collections of PSMs <dataset>` objects.
-        PSMs are aggregated across all of the collections for model
-        training, but the confidence estimates are calculated and
-        returned separately.
+    psms_info : Dict
+        Contains all required info about the input data
     model: Model object, optional
         The :py:class:`mokapot.Model` object to be fit. The default is
         :code:`None`, which attempts to mimic the same support vector
@@ -243,12 +240,12 @@ def make_train_sets(test_idx, subset_max_train, data_size):
     """
     Parameters
     ----------
-    psms : list of PsmDataset
-        The PsmDataset to get a subset of.
     test_idx : list of list of numpy.ndarray
         The indicies of the test sets
     subset_max_train : int or None
         The number of PSMs for training.
+    data_size : int
+        size of the input data
 
     Yields
     ------
@@ -322,10 +319,10 @@ def _predict(models_idx, psms_info, models, test_fdr):
 
     Parameters
     ----------
-    dset : PsmDataset
-        The dataset to rescore
-    test_idx : list of numpy.ndarray
-        The indicies of the test sets
+    psms_info : Dict
+        Contains all required info about the dataset to rescore
+    models_idx : list of numpy.ndarray
+        The indicies of the models to predict with
     models : list of Model
         The models for each dataset and whether it
         was reset or not.
