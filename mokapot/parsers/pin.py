@@ -187,10 +187,17 @@ def read_percolator(
 
     # Check that features don't have missing values:
     feat_slices = utils.create_chunks(
-        data=features, chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS
+        data=features + spectra + labels,
+        chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
     )
+    df_spectra = []
     features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
-        delayed(drop_missing_values)(file=perc_file, column=c)
+        delayed(drop_missing_values_and_fill_spectra_dataframe)(
+            file=perc_file,
+            column=c,
+            spectra=spectra + labels,
+            df_spectra=df_spectra,
+        )
         for c in feat_slices
     )
     features_to_drop = [drop for drop in features_to_drop if drop]
@@ -226,12 +233,15 @@ def read_percolator(
         "expmass_column": expmass,
         "rt_column": ret_time,
         "charge_column": charge,
+        "spectra_dataframe": pd.concat(df_spectra),
     }
 
 
 # Utility Functions -----------------------------------------------------------
-def drop_missing_values(file, column):
-    na_mask = pd.DataFrame([], columns=column)
+def drop_missing_values_and_fill_spectra_dataframe(
+    file, column, spectra, df_spectra
+):
+    na_mask = pd.DataFrame([], columns=list(set(column) - set(spectra)))
     with open_file(file) as f:
         reader = read_file_in_chunks(
             file=f,
@@ -239,12 +249,16 @@ def drop_missing_values(file, column):
             chunk_size=CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS,
         )
         for i, feature in enumerate(reader):
+            if set(spectra) <= set(column):
+                df_spectra.append(feature[spectra])
+                feature.drop(spectra, axis=1, inplace=True)
             na_mask = na_mask.append(
                 pd.DataFrame([feature.isna().any(axis=0)]), ignore_index=True
             )
-        na_mask = na_mask.isna().any(axis=0)
+        del reader
+        na_mask = na_mask.any(axis=0)
         if na_mask.any():
-            return na_mask[~na_mask].index
+            return list(na_mask[na_mask].index)
 
 
 def open_file(file_name):

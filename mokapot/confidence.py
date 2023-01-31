@@ -464,12 +464,6 @@ class LinearConfidence(Confidence):
         self._protein_column = "proteinIds"
         self._eval_fdr = eval_fdr
 
-        LOGGER.info("Performing target-decoy competition...")
-        LOGGER.info(
-            "Keeping the best match per %s columns...",
-            "+".join(self._psm_columns),
-        )
-
         self._assign_confidence(
             psms_path,
             peptides_path,
