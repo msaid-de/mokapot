@@ -113,6 +113,7 @@ def main():
         dest_dir=config.dest_dir,
         file_root=config.file_root,
         decoys=config.keep_decoys,
+        skip_deduplication=config.skip_deduplication,
         proteins=proteins,
     )
 
