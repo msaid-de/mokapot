@@ -884,7 +884,7 @@ def assign_confidence(
             "Keeping the best match per %s columns...",
             "+".join(psms_info["spectrum_columns"]),
         )
-        metadata_columns = ["PSMId", "Label", "Peptide", "proteinIds", "score"]
+        metadata_columns = ["PSMId", "Label", "peptide", "proteinIds", "score"]
         with open(psms_path, "w") as f_psm:
             f_psm.write(f"{sep.join(metadata_columns)}\n")
         with open(peptides_path, "w") as f_peptide:
