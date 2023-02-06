@@ -99,7 +99,7 @@ def get_next_row(file_handles, current_rows, col_index, sep="\t"):
         file_handles[max_key].close()
         del current_rows[max_key]
         del file_handles[max_key]
-        return None
+        return max_row
 
     return max_row
 
