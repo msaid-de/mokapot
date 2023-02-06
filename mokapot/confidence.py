@@ -451,7 +451,7 @@ class LinearConfidence(Confidence):
         dest_dir=None,
         file_root=None,
         decoys=None,
-        deduplication=False,
+        deduplication=True,
         proteins=None,
         sep="\t",
         group_column=None,
@@ -551,7 +551,7 @@ class LinearConfidence(Confidence):
         levels = ["PSMs"]
         level_data_path = [psms_path]
 
-        if not self.deduplication:
+        if self.deduplication:
             levels.append("peptides")
             level_data_path.append(peptides_path)
 
@@ -810,7 +810,7 @@ def assign_confidence(
     file_root=None,
     sep="\t",
     decoys=False,
-    skip_deduplication=False,
+    deduplication=True,
     proteins=None,
     group_column=None,
     combine=False,
@@ -876,7 +876,7 @@ def assign_confidence(
                 chunk_metadata,
                 score_chunk,
                 psms_info,
-                skip_deduplication,
+                deduplication,
                 i,
                 sep,
             )
@@ -901,16 +901,7 @@ def assign_confidence(
         with open(psms_path, "w") as f_psm:
             f_psm.write(f"{sep.join(metadata_columns)}\n")
 
-        if skip_deduplication:
-            n_psms = 0
-            for row in iterable_sorted:
-                n_psms += 1
-                with open(psms_path, "a") as f_psm:
-                    f_psm.write(
-                        sep.join([row[0], row[1], row[-3], row[-2], row[-1]])
-                    )
-            LOGGER.info("\t- Found %i PSMs.", n_psms)
-        else:
+        if deduplication:
             with open(peptides_path, "w") as f_peptide:
                 f_peptide.write(f"{sep.join(metadata_columns)}\n")
 
@@ -920,9 +911,18 @@ def assign_confidence(
                 out_peptides="peptides.csv",
                 sep=sep,
             )
-
             LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
             LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
+        else:
+            n_psms = 0
+            for row in iterable_sorted:
+                n_psms += 1
+                with open(psms_path, "a") as f_psm:
+                    f_psm.write(
+                        sep.join([row[0], row[1], row[-3], row[-2], row[-1]])
+                    )
+            LOGGER.info("\t- Found %i PSMs.", n_psms)
+
         [os.remove(sc_path) for sc_path in scores_metadata_paths]
 
         return LinearConfidence(
@@ -935,7 +935,7 @@ def assign_confidence(
             file_root=file_root,
             sep=sep,
             decoys=decoys,
-            deduplication=skip_deduplication,
+            deduplication=deduplication,
             proteins=proteins,
             group_column=group_column,
             combine=combine,
@@ -961,7 +961,7 @@ def save_sorted_metadata_chunks(
 ):
     chunk_metadata["score"] = score_chunk
     chunk_metadata.sort_values(by="score", ascending=False, inplace=True)
-    if not deduplication:
+    if deduplication:
         chunk_metadata = chunk_metadata.drop_duplicates(
             psms_info["spectrum_columns"]
         )
