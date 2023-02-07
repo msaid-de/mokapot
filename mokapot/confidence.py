@@ -451,6 +451,7 @@ class LinearConfidence(Confidence):
         dest_dir=None,
         file_root=None,
         decoys=None,
+        deduplication=True,
         proteins=None,
         sep="\t",
         group_column=None,
@@ -463,6 +464,7 @@ class LinearConfidence(Confidence):
         self._peptide_column = psms_info["peptide_column"]
         self._protein_column = "proteinIds"
         self._eval_fdr = eval_fdr
+        self.deduplication = deduplication
 
         self._assign_confidence(
             psms_path,
@@ -546,8 +548,13 @@ class LinearConfidence(Confidence):
             A factor to by which to group PSMs for grouped confidence
             estimation.
         """
-        levels = ["PSMs", "peptides"]
-        level_data_path = [psms_path, peptides_path]
+        levels = ["PSMs"]
+        level_data_path = [psms_path]
+
+        if self.deduplication:
+            levels.append("peptides")
+            level_data_path.append(peptides_path)
+
         if self._proteins:
             data = read_file(peptides_path)
             data = data.apply(pd.to_numeric, errors="ignore")
@@ -803,6 +810,7 @@ def assign_confidence(
     file_root=None,
     sep="\t",
     decoys=False,
+    deduplication=True,
     proteins=None,
     group_column=None,
     combine=False,
@@ -865,7 +873,12 @@ def assign_confidence(
 
         Parallel(n_jobs=-1, require="sharedmem")(
             delayed(save_sorted_metadata_chunks)(
-                chunk_metadata, score_chunk, psms_info, i, sep
+                chunk_metadata,
+                score_chunk,
+                psms_info,
+                deduplication,
+                i,
+                sep,
             )
             for chunk_metadata, score_chunk, i in zip(
                 reader, scores_slices, range(len(scores_slices))
@@ -887,18 +900,30 @@ def assign_confidence(
         metadata_columns = ["PSMId", "Label", "peptide", "proteinIds", "score"]
         with open(psms_path, "w") as f_psm:
             f_psm.write(f"{sep.join(metadata_columns)}\n")
-        with open(peptides_path, "w") as f_peptide:
-            f_peptide.write(f"{sep.join(metadata_columns)}\n")
 
-        unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
-            iterable=iterable_sorted,
-            out_psms="psms.csv",
-            out_peptides="peptides.csv",
-            sep=sep,
-        )
+        if deduplication:
+            with open(peptides_path, "w") as f_peptide:
+                f_peptide.write(f"{sep.join(metadata_columns)}\n")
+
+            unique_psms, unique_peptides = utils.get_unique_psms_and_peptides(
+                iterable=iterable_sorted,
+                out_psms="psms.csv",
+                out_peptides="peptides.csv",
+                sep=sep,
+            )
+            LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
+            LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
+        else:
+            n_psms = 0
+            for row in iterable_sorted:
+                n_psms += 1
+                with open(psms_path, "a") as f_psm:
+                    f_psm.write(
+                        sep.join([row[0], row[1], row[-3], row[-2], row[-1]])
+                    )
+            LOGGER.info("\t- Found %i PSMs.", n_psms)
+
         [os.remove(sc_path) for sc_path in scores_metadata_paths]
-        LOGGER.info("\t- Found %i PSMs from unique spectra.", unique_psms)
-        LOGGER.info("\t- Found %i unique peptides.", unique_peptides)
 
         return LinearConfidence(
             psms_info=psms_info,
@@ -910,6 +935,7 @@ def assign_confidence(
             file_root=file_root,
             sep=sep,
             decoys=decoys,
+            deduplication=deduplication,
             proteins=proteins,
             group_column=group_column,
             combine=combine,
@@ -931,13 +957,14 @@ def assign_confidence(
 
 
 def save_sorted_metadata_chunks(
-    chunk_metadata, score_chunk, psms_info, i, sep
+    chunk_metadata, score_chunk, psms_info, deduplication, i, sep
 ):
     chunk_metadata["score"] = score_chunk
     chunk_metadata.sort_values(by="score", ascending=False, inplace=True)
-    chunk_metadata = chunk_metadata.drop_duplicates(
-        psms_info["spectrum_columns"]
-    )
+    if deduplication:
+        chunk_metadata = chunk_metadata.drop_duplicates(
+            psms_info["spectrum_columns"]
+        )
     chunk_metadata.to_csv(
         f"scores_metadata_{i}.csv",
         sep=sep,

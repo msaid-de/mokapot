@@ -251,6 +251,13 @@ def _parser():
     )
 
     parser.add_argument(
+        "--skip_deduplication",
+        default=False,
+        action="store_true",
+        help=("Keep deduplication"),
+    )
+
+    parser.add_argument(
         "--folds",
         type=int,
         default=3,

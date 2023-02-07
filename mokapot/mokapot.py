@@ -105,6 +105,7 @@ def main():
         subset_max_train=config.subset_max_train,
     )
     logging.info("")
+    deduplication = not config.skip_deduplication
     assign_confidence(
         psms_info=psms_info,
         scores=scores,
@@ -113,6 +114,7 @@ def main():
         dest_dir=config.dest_dir,
         file_root=config.file_root,
         decoys=config.keep_decoys,
+        deduplication=deduplication,
         proteins=proteins,
     )
 
