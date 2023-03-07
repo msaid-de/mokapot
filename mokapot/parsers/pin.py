@@ -5,6 +5,7 @@ import gzip
 import logging
 
 import pandas as pd
+import numpy as np
 from joblib import Parallel, delayed
 
 from .. import utils
@@ -380,3 +381,24 @@ def _check_column(col, columns, default):
         raise ValueError(f"The '{col}' column was not found.")
 
     return col
+
+
+def read_data_for_rescale(psms_info, subset_max_rescale):
+    data_size = sum(1 for line in open(psms_info["file"])) - 1
+    skip_rows = None
+    if subset_max_rescale and subset_max_rescale < data_size:
+        skip_rows = sorted(
+            np.random.choice(
+                a=range(1, data_size + 1),
+                size=data_size - subset_max_rescale,
+                replace=False,
+            )
+        )
+    return pd.read_csv(
+        psms_info["file"],
+        usecols=psms_info["feature_columns"],
+        skiprows=skip_rows,
+        sep="\t",
+        index_col=False,
+        on_bad_lines="skip",
+    )

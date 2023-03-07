@@ -457,7 +457,7 @@ def save_model(model, out_file):
     return model.save(out_file)
 
 
-def load_model(model_file):
+def load_model(model_file, data_to_rescale=None):
     """
     Load a saved model for mokapot.
 
@@ -499,6 +499,9 @@ def load_model(model_file):
         logging.info("Loading mokapot model.")
         with open(model_file, "rb") as mod_in:
             model = pickle.load(mod_in)
+
+    if data_to_rescale is not None:
+        model.scaler.fit(data_to_rescale.values)
 
     return model
 

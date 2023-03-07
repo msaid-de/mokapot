@@ -13,7 +13,7 @@ import numpy as np
 
 from . import __version__
 from .config import Config
-from .parsers.pin import read_pin
+from .parsers.pin import read_pin, read_data_for_rescale
 from .parsers.pepxml import read_pepxml
 from .parsers.fasta import read_fasta
 from .brew import brew
@@ -77,13 +77,21 @@ def main():
 
     # Define a model:
     if config.init_weights:
+        data_to_rescale = None
+        if config.rescale:
+            data_to_rescale = read_data_for_rescale(
+                psms_info=dataset, subset_max_rescale=config.subset_max_rescale
+            )
         model_files = os.listdir(str(config.init_weights))
         if len(model_files) != config.folds:
             raise RuntimeError(
                 "Number of loaded models should be equal to the number of folds."
             )
         model = [
-            load_model(os.path.join(str(config.init_weights), model_file))
+            load_model(
+                os.path.join(str(config.init_weights), model_file),
+                data_to_rescale,
+            )
             for model_file in model_files
         ]
     else:
