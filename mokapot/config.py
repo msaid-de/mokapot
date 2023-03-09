@@ -269,6 +269,13 @@ def _parser():
     )
 
     parser.add_argument(
+        "--ensemble",
+        default=False,
+        action="store_true",
+        help=("activate ensemble prediction. "),
+    )
+
+    parser.add_argument(
         "--open_modification_bin_size",
         type=float,
         help=(
