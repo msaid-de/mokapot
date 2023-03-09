@@ -107,28 +107,27 @@ def brew(
     LOGGER.info("Splitting PSMs into %i folds...", folds)
     test_folds_idx = _split(df_spectra, folds)
     del df_spectra
-    train_sets = list(
-        make_train_sets(
-            test_idx=test_folds_idx,
-            subset_max_train=subset_max_train,
-            data_size=data_size,
-        )
-    )
-
-    train_psms = parse_in_chunks(
-        psms_info=psms_info,
-        idx=train_sets,
-        chunk_size=CHUNK_SIZE_READ_ALL_DATA,
-    )
-    del train_sets
     if type(model) is list:
         models = [[m, False] for m in model]
     else:
+        train_sets = list(
+            make_train_sets(
+                test_idx=test_folds_idx,
+                subset_max_train=subset_max_train,
+                data_size=data_size,
+            )
+        )
+        train_psms = parse_in_chunks(
+            psms_info=psms_info,
+            idx=train_sets,
+            chunk_size=CHUNK_SIZE_READ_ALL_DATA,
+        )
+        del train_sets
         models = Parallel(n_jobs=max_workers, require="sharedmem")(
             delayed(_fit_model)(d, psms_info, copy.deepcopy(model), f, seed)
             for f, d in enumerate(train_psms)
         )
-    del train_psms
+        del train_psms
 
     # sort models to have deterministic results with multithreading.
     # Only way I found to sort is using intercept values
