@@ -253,8 +253,9 @@ def drop_missing_values_and_fill_spectra_dataframe(
             if set(spectra) <= set(column):
                 df_spectra.append(feature[spectra])
                 feature.drop(spectra, axis=1, inplace=True)
-            na_mask = na_mask.append(
-                pd.DataFrame([feature.isna().any(axis=0)]), ignore_index=True
+            na_mask = pd.concat(
+                [na_mask, pd.DataFrame([feature.isna().any(axis=0)])],
+                ignore_index=True,
             )
         del reader
         na_mask = na_mask.any(axis=0)
