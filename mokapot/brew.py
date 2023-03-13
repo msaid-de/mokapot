@@ -33,6 +33,7 @@ def brew(
     max_workers=1,
     seed=1,
     subset_max_train=None,
+    ensemble=False,
 ):
     """
     Re-score one or more collection of PSMs.
@@ -150,7 +151,15 @@ def brew(
     elif all([m[0].is_trained for m in models]):
         # If we don't reset, assign scores to each fold:
         models = [m for m, _ in models]
-        scores = _predict(model_to_psm_idx, psms_info, models, test_fdr)
+        if ensemble:
+            scores = _predict_with_ensemble(psms_info=psms_info, models=models)
+        else:
+            scores = _predict(
+                models_idx=model_to_psm_idx,
+                psms_info=psms_info,
+                models=models,
+                test_fdr=test_fdr,
+            )
     else:
         # If model training has failed
         scores = np.zeros(data_size)
@@ -390,6 +399,35 @@ def _predict(models_idx, psms_info, models, test_fdr):
     del fold_scores
     orig_idx = np.argsort(sum(orig_idx, [])).tolist()
     return np.concatenate(scores)[orig_idx]
+
+
+def _predict_with_ensemble(psms_info, models):
+    """
+    Return the new scores for the dataset using ensemble of all trained models
+
+    Parameters
+    ----------
+    psms_info : Dict
+        Contains all required info about the dataset to rescore
+    models : list of Model
+        The models for each dataset and whether it
+        was reset or not.
+    """
+    scores = [[] for _ in range(len(models))]
+    reader = read_file_in_chunks(
+        file=psms_info["file"],
+        chunk_size=CHUNK_SIZE_ROWS_PREDICTION,
+        use_cols=psms_info["columns"],
+    )
+    for psms in reader:
+        psms = _create_psms(psms_info, psms, enforce_checks=False)
+        fold_scores = Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(mod.predict)(psms=psms) for mod in models
+        )
+        [score.append(fs) for score, fs in zip(scores, fold_scores)]
+    del fold_scores
+    scores = [np.hstack(score) for score in scores]
+    return np.mean(scores, axis=0)
 
 
 def _fit_model(train_set, psms_info, model, fold, seed):

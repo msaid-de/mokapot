@@ -111,6 +111,7 @@ def main():
         max_workers=config.max_workers,
         seed=config.seed,
         subset_max_train=config.subset_max_train,
+        ensemble=config.ensemble,
     )
     logging.info("")
     deduplication = not config.skip_deduplication
