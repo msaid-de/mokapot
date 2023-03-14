@@ -288,7 +288,7 @@ class Model:
             target = target[shuffled_idx]
             num_passed.append((target == 1).sum())
 
-            LOGGER.info(
+            LOGGER.debug(
                 "\t- Iteration %i: %i training PSMs passed.", i, num_passed[i]
             )
 
@@ -305,9 +305,9 @@ class Model:
         self.estimator = model
         weights = _get_weights(self.estimator, self.features)
         if weights is not None:
-            LOGGER.info("Normalized feature weights in the learned model:")
+            LOGGER.debug("Normalized feature weights in the learned model:")
             for line in weights:
-                LOGGER.info("    %s", line)
+                LOGGER.debug("    %s", line)
 
         self.is_trained = True
         self.feat_pass = feat_pass
@@ -525,7 +525,7 @@ def _get_starting_labels(psms, model):
     feat_pass : int
         The number of passing PSMs with the best feature.
     """
-    LOGGER.info("Finding initial direction...")
+    LOGGER.debug("Finding initial direction...")
     if model.direction is None and not model.is_trained:
         feat_res = psms._find_best_feature(model.train_fdr)
         best_feat, feat_pass, start_labels, desc = feat_res
@@ -603,7 +603,7 @@ def _find_hyperparameters(model, features, labels):
     An estimator.
     """
     if model._needs_cv:
-        LOGGER.info("Selecting hyperparameters...")
+        LOGGER.debug("Selecting hyperparameters...")
         cv_samples = features[labels.astype(bool), :]
         cv_targ = (labels[labels.astype(bool)] + 1) / 2
 
@@ -616,7 +616,7 @@ def _find_hyperparameters(model, features, labels):
         new_est.set_params(**best_params)
         model._needs_cv = False
         for param, value in best_params.items():
-            LOGGER.info("\t- %s = %s", param, value)
+            LOGGER.debug("\t- %s = %s", param, value)
     else:
         new_est = model.estimator
 
