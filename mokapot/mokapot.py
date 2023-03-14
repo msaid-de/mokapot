@@ -6,6 +6,7 @@ import sys
 import time
 import logging
 import datetime
+import warnings
 from functools import partial
 from pathlib import Path
 
@@ -35,7 +36,8 @@ def main():
         2: logging.INFO,
         3: logging.DEBUG,
     }
-
+    if verbosity_dict[config.verbosity] != logging.DEBUG:
+        warnings.filterwarnings("ignore")
     logging.basicConfig(
         format=("[{levelname}] {message}"),
         style="{",
