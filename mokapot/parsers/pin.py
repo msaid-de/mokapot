@@ -215,7 +215,7 @@ def read_percolator(
 
     LOGGER.info("Using %i features:", len(_feature_columns))
     for i, feat in enumerate(_feature_columns):
-        LOGGER.info("  (%i)\t%s", i + 1, feat)
+        LOGGER.debug("  (%i)\t%s", i + 1, feat)
 
     return {
         "file": perc_file,

@@ -95,7 +95,6 @@ def brew(
     df_spectra = convert_targets_column(df_spectra, target_column)
     data_size = len(df_spectra)
     if data_size > 1:
-        LOGGER.info("")
         LOGGER.info("Found %i total PSMs.", data_size)
         num_targets = (df_spectra[target_column]).sum()
         num_decoys = (~df_spectra[target_column]).sum()
@@ -282,7 +281,7 @@ def make_train_sets(test_idx, subset_max_train, data_size):
                     train_idx_size,
                 )
             else:
-                LOGGER.info(
+                LOGGER.debug(
                     "Subsetting PSMs (%i) to (%i).",
                     train_idx_size,
                     subset_max_train,
@@ -448,8 +447,8 @@ def _fit_model(train_set, psms_info, model, fold, seed):
     reset : bool
         Whether the models should be reset to their original parameters.
     """
-    LOGGER.info("")
-    LOGGER.info("=== Analyzing Fold %i ===", fold + 1)
+    LOGGER.debug("")
+    LOGGER.debug("=== Analyzing Fold %i ===", fold + 1)
     reset = False
     train_set = _create_psms(psms_info, train_set)
     try:
