@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mokapot"
-version = "2.0.1"
+version = "2.0.2"
 description = "Fast and flexible semi-supervised learning for peptide detection"
 authors = ["William E. Fondrie <fondriew@gmail.com>"]
 
