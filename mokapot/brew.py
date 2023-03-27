@@ -272,16 +272,8 @@ def make_train_sets(test_idx, subset_max_train, data_size):
         train_idx += list(set(range(k, data_size)) - set(idx))
         train_idx_size = len(train_idx)
         if subset_max_train is not None:
-            if subset_max_train > train_idx_size:
-                LOGGER.warning(
-                    "The provided subset value (%i) is larger than the number "
-                    "of psms in the training split (%i), so it will be "
-                    "ignored.",
-                    subset_max_train,
-                    train_idx_size,
-                )
-            else:
-                LOGGER.debug(
+            if subset_max_train < train_idx_size:
+                LOGGER.info(
                     "Subsetting PSMs (%i) to (%i).",
                     train_idx_size,
                     subset_max_train,
