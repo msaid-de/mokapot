@@ -327,10 +327,9 @@ class Confidence:
         if level != "proteins" and self._protein_column is not None:
             output_columns.remove(self._protein_column)
             output_columns.append(self._protein_column)
-        if not os.path.exists(outfile_t):
-            with open(outfile_t, "w") as fp:
-                fp.write(f"{sep.join(output_columns)}\n")
-        if decoys and not os.path.exists(outfile_d):
+        with open(outfile_t, "w") as fp:
+            fp.write(f"{sep.join(output_columns)}\n")
+        if decoys:
             with open(outfile_d, "w") as fp:
                 fp.write(f"{sep.join(output_columns)}\n")
 
