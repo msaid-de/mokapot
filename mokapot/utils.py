@@ -7,11 +7,11 @@ import numpy as np
 import pandas as pd
 
 
-def groupby_max(df, by_cols, max_col):
+def groupby_max(df, by_cols, max_col, rng):
     """Quickly get the indices for the maximum value of col"""
     by_cols = tuplize(by_cols)
     idx = (
-        df.sample(frac=1)
+        df.sample(frac=1, random_state=rng)
         .sort_values(list(by_cols) + [max_col], axis=0)
         .drop_duplicates(list(by_cols), keep="last")
         .index
@@ -67,7 +67,7 @@ def get_unique_psms_and_peptides(iterable, out_psms, out_peptides, sep):
     f_peptide = open(out_peptides, "a")
     for line_list in iterable:
         line_hash_psm = tuple([int(line_list[2]), float(line_list[3])])
-        line_hash_peptide = line_list[4]
+        line_hash_peptide = line_list[-3]
         if line_hash_psm not in seen_psm:
             seen_psm.add(line_hash_psm)
             f_psm.write(

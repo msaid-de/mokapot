@@ -22,8 +22,8 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.svm import LinearSVC
-from sklearn.experimental import enable_halving_search_cv
-from sklearn.model_selection import HalvingGridSearchCV
+from sklearn.model_selection import GridSearchCV, KFold
+from sklearn.model_selection._search import BaseSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 
@@ -51,9 +51,10 @@ class Model:
 
     Parameters
     ----------
-    estimator : classifier object, optional
+    estimator : classifier object
         A classifier that is assumed to implement the scikit-learn
-        estimator interface.
+        estimator interface. To emulate Percolator (an SVM model) use
+        :py:class:`PercolatorModel` instead.
     scaler : scaler object or "as-is", optional
         Defines how features are normalized before model fitting and
         prediction. The default, :code:`None`, subtracts the mean and scales
@@ -82,6 +83,8 @@ class Model:
     shuffle : bool, optional
         Should the order of PSMs be randomized for training? For deterministic
         algorithms, this will have no effect.
+    rng : int or numpy.random.Generator, optional
+        The seed or generator used for model training.
 
     Attributes
     ----------
@@ -94,7 +97,7 @@ class Model:
         model has yet to be trained.
     is_trained : bool
         Indicates if the model has been trained.
-        train_fdr : float
+    train_fdr : float
         The maximum false discovery rate at which to consider a target PSM as a
         positive example.
     max_iter : int
@@ -107,6 +110,10 @@ class Model:
         the model still be used?
     shuffle : bool
         Is the order of PSMs shuffled for training?
+    fold : int or None
+        The CV fold on which this model was fit, if any.
+    rng : numpy.random.Generator
+        The random number generator.
     """
 
     def __init__(
@@ -118,6 +125,7 @@ class Model:
         direction=None,
         override=False,
         shuffle=True,
+        rng=None,
     ):
         """Initialize a Model object"""
         self.estimator = clone(estimator)
@@ -139,9 +147,15 @@ class Model:
         self.direction = direction
         self.override = override
         self.shuffle = shuffle
+        self.rng = rng
+
+        # To keep track of the fold that this was trained on.
+        # Needed to ensure reproducibility in brew() with
+        # multiprocessing.
+        self.fold = None
 
         # Sort out whether we need to optimize hyperparameters:
-        if hasattr(self.estimator, "estimator"):
+        if isinstance(self.estimator, BaseSearchCV):
             self._needs_cv = True
         else:
             self._needs_cv = False
@@ -155,6 +169,16 @@ class Model:
             f"\tscaler: {self.scaler}\n"
             f"\tfeatures: {self.features}"
         )
+
+    @property
+    def rng(self):
+        """The random number generator for model training."""
+        return self._rng
+
+    @rng.setter
+    def rng(self, rng):
+        """Set the random number generator"""
+        self._rng = np.random.default_rng(rng)
 
     def save(self, out_file):
         """
@@ -215,7 +239,7 @@ class Model:
         """Alias for :py:meth:`decision_function`."""
         return self.decision_function(psms)
 
-    def fit(self, psms, seed):
+    def fit(self, psms):
         """
         Fit the model using the Percolator algorithm.
 
@@ -259,8 +283,7 @@ class Model:
         norm_feat = self.scaler.fit_transform(psms.features.values)
 
         # Shuffle order
-        np.random.seed(seed)
-        shuffled_idx = np.random.permutation(np.arange(len(start_labels)))
+        shuffled_idx = self.rng.permutation(np.arange(len(start_labels)))
         original_idx = np.argsort(shuffled_idx)
         if self.shuffle:
             norm_feat = norm_feat[shuffled_idx, :]
@@ -351,11 +374,10 @@ class PercolatorModel(Model):
     override : bool, optional
         If the learned model performs worse than the best feature, should
         the model still be used?
-    shuffle : bool, optional
-        Should the order of PSMs be randomized for training? For deterministic
-        algorithms, this will have no effect.
     n_jobs : int, optional
         The number of jobs used to parallelize the hyperparameter grid search.
+    rng : int or numpy.random.Generator, optional
+        The seed or generator used for model training.
 
     Attributes
     ----------
@@ -382,6 +404,8 @@ class PercolatorModel(Model):
     n_jobs : int
         The number of jobs to use for parallizing the hyperparameter
         grid search.
+    rng : numpy.random.Generator
+        The random number generator.
     """
 
     def __init__(
@@ -392,17 +416,18 @@ class PercolatorModel(Model):
         direction=None,
         override=False,
         n_jobs=1,
+        rng=None,
     ):
         """Initialize a PercolatorModel"""
         self.n_jobs = n_jobs
+        rng = np.random.default_rng(rng)
         svm_model = LinearSVC(dual=False, random_state=7)
-        estimator = HalvingGridSearchCV(
+        estimator = GridSearchCV(
             svm_model,
             param_grid=PERC_GRID,
             refit=False,
-            cv=3,
+            cv=KFold(3, shuffle=True, random_state=rng.integers(1, 1e6)),
             n_jobs=n_jobs,
-            random_state=3,
         )
 
         super().__init__(
@@ -412,6 +437,7 @@ class PercolatorModel(Model):
             max_iter=max_iter,
             direction=direction,
             override=override,
+            rng=rng,
         )
 
 

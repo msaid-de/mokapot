@@ -1,35 +1,35 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
 name: tests
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
-  schedule:
-  - cron: "0 0 1 1/1 *" # Run monthly
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
+      fail-fast: false
       matrix:
+        python-version: ['3.8', '3.9', '3.10',]
         os: [ubuntu-latest, windows-latest, macos-latest]
+        experimental: [false,]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
-        python-version: "3.x"
+        python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest pytest-cov wheel
         pip install -e .
+        pip install -e ./tests/system_tests/sample_plugin/.
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
@@ -40,6 +40,7 @@ jobs:
       run: |
         pytest -v --cov=mokapot tests/
     - name: Upload coverage to codecov
-      uses: codecov/codecov-action@v1
+      uses: codecov/codecov-action@v3
       with:
+        token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: true
