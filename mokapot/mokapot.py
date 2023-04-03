@@ -99,7 +99,7 @@ def main():
         data_to_rescale = None
         if config.rescale:
             data_to_rescale = read_data_for_rescale(
-                psms_info=datasets,
+                psms=datasets,
                 subset_max_rescale=config.subset_max_rescale,
             )
         model = [
@@ -140,7 +140,7 @@ def main():
         )
 
     # Fit the models:
-    psms_info, models, scores, desc = brew(
+    psms, models, scores, desc = brew(
         datasets,
         model=model,
         test_fdr=config.test_fdr,
@@ -157,7 +157,7 @@ def main():
     if config.file_root is not None:
         config.dest_dir = f"{Path(config.dest_dir, config.file_root)}."
     assign_confidence(
-        psms_info=psms_info,
+        psms=psms,
         scores=scores,
         eval_fdr=config.test_fdr,
         descs=desc,

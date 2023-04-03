@@ -1,7 +1,6 @@
 """
 This module contains the parsers for reading in PSMs
 """
-import gzip
 import logging
 
 import pandas as pd
@@ -9,6 +8,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from .. import utils
+from ..dataset import OnDiskPsmDataset, read_file
 from ..constants import (
     CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
     CHUNK_SIZE_ROWS_FOR_DROP_COLUMNS,
@@ -202,6 +202,10 @@ def read_percolator(
         )
         for c in feat_slices
     )
+    df_spectra = utils.convert_targets_column(
+        pd.concat(df_spectra).apply(pd.to_numeric, errors="ignore"),
+        target_column=labels[0],
+    )
     features_to_drop = [drop for drop in features_to_drop if drop]
     features_to_drop = utils.flatten(features_to_drop)
     if len(features_to_drop) > 1:
@@ -218,25 +222,25 @@ def read_percolator(
     for i, feat in enumerate(_feature_columns):
         LOGGER.debug("  (%i)\t%s", i + 1, feat)
 
-    return {
-        "file": perc_file,
-        "columns": columns,
-        "target_column": labels[0],
-        "spectrum_columns": spectra,
-        "peptide_column": peptides[0],
-        "protein_column": proteins[0],
-        "group_column": group_column,
-        "feature_columns": _feature_columns,
-        "metadata_columns": nonfeat,
-        "filename_column": filename,
-        "scan_column": scan,
-        "specId_column": specid[0],
-        "calcmass_column": calcmass,
-        "expmass_column": expmass,
-        "rt_column": ret_time,
-        "charge_column": charge,
-        "spectra_dataframe": pd.concat(df_spectra),
-    }
+    return OnDiskPsmDataset(
+        filename=perc_file,
+        columns=columns,
+        target_column=labels[0],
+        spectrum_columns=spectra,
+        peptide_column=peptides[0],
+        protein_column=proteins[0],
+        group_column=group_column,
+        feature_columns=_feature_columns,
+        metadata_columns=nonfeat,
+        filename_column=filename,
+        scan_column=scan,
+        specId_column=specid[0],
+        calcmass_column=calcmass,
+        expmass_column=expmass,
+        rt_column=ret_time,
+        charge_column=charge,
+        spectra_dataframe=df_spectra,
+    )
 
 
 # Utility Functions -----------------------------------------------------------
@@ -244,7 +248,7 @@ def drop_missing_values_and_fill_spectra_dataframe(
     file, column, spectra, df_spectra
 ):
     na_mask = pd.DataFrame([], columns=list(set(column) - set(spectra)))
-    with open_file(file) as f:
+    with utils.open_file(file) as f:
         reader = read_file_in_chunks(
             file=f,
             use_cols=column,
@@ -264,24 +268,6 @@ def drop_missing_values_and_fill_spectra_dataframe(
             return list(na_mask[na_mask].index)
 
 
-def open_file(file_name):
-    if str(file_name).endswith(".gz"):
-        return gzip.open(file_name)
-    else:
-        return open(file_name)
-
-
-def read_file(file_name, use_cols=None, target_column=None):
-    with open_file(file_name) as f:
-        df = pd.read_csv(
-            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
-        ).apply(pd.to_numeric, errors="ignore")
-    try:
-        return convert_targets_column(df, target_column)
-    except:
-        return df
-
-
 def read_file_in_chunks(file, chunk_size, use_cols):
     """
     when reading in chunks an open file object is required as input to iterate over the chunks
@@ -297,7 +283,7 @@ def read_file_in_chunks(file, chunk_size, use_cols):
 
 
 def get_column_names_from_file(file):
-    with open_file(file) as perc:
+    with utils.open_file(file) as perc:
         return perc.readline().rstrip().split("\t")
 
 
@@ -326,13 +312,13 @@ def get_rows_from_dataframe(idx, chunk, train_psms):
         )
 
 
-def parse_in_chunks(psms_info, train_idx, chunk_size):
+def parse_in_chunks(psms, train_idx, chunk_size):
     """
     Parse a file in chunks
 
     Parameters
     ----------
-    psms_info : dict object
+    psms : dict object
         contains all psms info.
     train_idx : list of list of indexes
         The indexes to select from data.
@@ -345,11 +331,11 @@ def parse_in_chunks(psms_info, train_idx, chunk_size):
         list of dataframes
     """
     train_psms = [[] for _ in range(len(train_idx))]
-    for file_name, idx in zip(psms_info["file"], zip(*train_idx)):
+    for p, idx in zip(psms, zip(*train_idx)):
         reader = read_file_in_chunks(
-            file=file_name,
+            file=p.filename,
             chunk_size=chunk_size,
-            use_cols=psms_info["columns"],
+            use_cols=p.columns,
         )
         Parallel(n_jobs=-1, require="sharedmem")(
             delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
@@ -362,13 +348,6 @@ def parse_in_chunks(psms_info, train_idx, chunk_size):
 
 def concat_chunks(df):
     return pd.concat(df)
-
-
-def convert_targets_column(data, target_column):
-    data[target_column] = data[target_column].astype(int)
-    if any(data[target_column] == -1):
-        data[target_column] = ((data[target_column] + 1) / 2).astype(bool)
-    return data
 
 
 def _check_column(col, columns, default):
@@ -385,9 +364,9 @@ def _check_column(col, columns, default):
     return col
 
 
-def read_data_for_rescale(psms_info, subset_max_rescale):
-    data_sizes = [sum(1 for line in open(p["file"])) - 1 for p in psms_info]
-    skip_rows_per_file = [None for _ in psms_info]
+def read_data_for_rescale(psms, subset_max_rescale):
+    data_sizes = [sum(1 for line in open(p.filename)) - 1 for p in psms]
+    skip_rows_per_file = [None for _ in psms]
     if subset_max_rescale and subset_max_rescale < sum(data_sizes):
         subset_max_rescale_per_file = [
             subset_max_rescale // len(data_sizes)
@@ -410,14 +389,11 @@ def read_data_for_rescale(psms_info, subset_max_rescale):
         ]
     return pd.concat(
         [
-            pd.read_csv(
-                p["file"],
-                usecols=p["feature_columns"],
-                skiprows=skip_rows,
-                sep="\t",
-                index_col=False,
-                on_bad_lines="skip",
+            read_file(
+                p.filename,
+                use_cols=p.feature_columns,
+                target_column=p.target_column,
             )
-            for p, skip_rows in zip(psms_info, skip_rows_per_file)
+            for p, skip_rows in zip(psms, skip_rows_per_file)
         ]
     ).reset_index(drop=True)

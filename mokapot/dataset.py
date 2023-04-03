@@ -25,7 +25,6 @@ import pandas as pd
 from . import qvalues
 from . import utils
 from .parsers.fasta import read_fasta
-from .parsers.pin import read_file
 from .proteins import Proteins
 
 LOGGER = logging.getLogger(__name__)
@@ -574,6 +573,200 @@ class CrossLinkedPsmDataset(PsmDataset):
         return new_labels
 
 
+class OnDiskPsmDataset:
+    def __init__(
+        self,
+        filename,
+        columns,
+        target_column,
+        spectrum_columns,
+        peptide_column,
+        protein_column,
+        group_column,
+        feature_columns,
+        metadata_columns,
+        filename_column,
+        scan_column,
+        specId_column,
+        calcmass_column,
+        expmass_column,
+        rt_column,
+        charge_column,
+        spectra_dataframe,
+    ):
+        """Initialize a PsmDataset object."""
+        self.filename = filename
+        self.columns = columns
+        self.target_column = target_column
+        self.peptide_column = peptide_column
+        self.protein_column = protein_column
+        self.spectrum_columns = spectrum_columns
+        self.group_column = group_column
+        self.feature_columns = feature_columns
+        self.metadata_columns = metadata_columns
+        self.filename_column = filename_column
+        self.scan_column = scan_column
+        self.calcmass_column = calcmass_column
+        self.expmass_column = expmass_column
+        self.rt_column = rt_column
+        self.charge_column = charge_column
+        self.specId_column = specId_column
+        self.spectra_dataframe = spectra_dataframe
+
+    def calibrate_scores(self, scores, eval_fdr, desc=True):
+        """
+        Calibrate scores as described in Granholm et al. [1]_
+
+        .. [1] Granholm V, Noble WS, Käll L. A cross-validation scheme
+           for machine learning algorithms in shotgun proteomics. BMC
+           Bioinformatics. 2012;13 Suppl 16(Suppl 16):S3.
+           doi:10.1186/1471-2105-13-S16-S3
+
+        Parameters
+        ----------
+        scores : numpy.ndarray
+            The scores for each PSM.
+        eval_fdr: float
+            The FDR threshold to use for calibration
+        desc: bool
+            Are higher scores better?
+
+        Returns
+        -------
+        numpy.ndarray
+            An array of calibrated scores.
+        """
+        targets = read_file(
+            self.filename,
+            use_cols=self.target_column,
+            target_column=self.target_column,
+        )
+        labels = _update_labels(scores, targets, eval_fdr, desc)
+        pos = labels == 1
+        if not pos.sum():
+            raise RuntimeError(
+                "No target PSMs were below the 'eval_fdr' threshold."
+            )
+
+        target_score = np.min(scores[pos])
+        decoy_score = np.median(scores[labels == -1])
+
+        return (scores - target_score) / (target_score - decoy_score)
+
+    def _targets_count_by_feature(self, column, eval_fdr, desc):
+        df = read_file(
+            file_name=self.filename,
+            use_cols=[column] + [self.target_column],
+            target_column=self.target_column,
+        )
+
+        return (
+            _update_labels(
+                df.loc[:, self.columns],
+                targets=df.loc[:, self.target_column],
+                eval_fdr=eval_fdr,
+                desc=desc,
+            )
+            == 1
+        ).sum()
+
+    def find_best_feature(self, eval_fdr):
+        best_feat = None
+        best_positives = 0
+        new_labels = None
+        for desc in (True, False):
+            num_passing = pd.Series(
+                [
+                    self._targets_count_by_feature(
+                        eval_fdr=eval_fdr,
+                        column=c,
+                        desc=desc,
+                    )
+                    for c in self.feature_columns
+                ],
+                index=self.feature_columns,
+            )
+
+            feat_idx = num_passing.idxmax()
+            num_passing = num_passing[feat_idx]
+
+            if num_passing > best_positives:
+                best_positives = num_passing
+                best_feat = feat_idx
+                df = read_file(
+                    file_name=self.filename,
+                    use_cols=[best_feat, self.target_column],
+                )
+
+                new_labels = _update_labels(
+                    scores=df.loc[:, best_feat],
+                    targets=df[self.target_column],
+                    eval_fdr=eval_fdr,
+                    desc=desc,
+                )
+                best_desc = desc
+
+        if best_feat is None:
+            raise RuntimeError("No PSMs found below the 'eval_fdr'.")
+
+        return best_feat, best_positives, new_labels, best_desc
+
+    def update_labels(self, scores, target_column, eval_fdr=0.01, desc=True):
+        df = read_file(
+            file_name=self.filename,
+            use_cols=[target_column],
+            target_column=target_column,
+        )
+        return _update_labels(
+            scores=scores,
+            targets=df[target_column],
+            eval_fdr=eval_fdr,
+            desc=desc,
+        )
+
+    def _split(self, folds, rng):
+        """
+        Get the indices for random, even splits of the dataset.
+
+        Each tuple of integers contains the indices for a random subset of
+        PSMs. PSMs are grouped by spectrum, such that all PSMs from the same
+        spectrum only appear in one split. The typical use for this method
+        is to split the PSMs into cross-validation folds.
+
+        Parameters
+        ----------
+        folds: int
+            The number of splits to generate.
+
+        Returns
+        -------
+        A tuple of tuples of ints
+            Each of the returned tuples contains the indices  of PSMs in a
+            split.
+        """
+        self.spectra_dataframe = self.spectra_dataframe[self.spectrum_columns]
+        scans = list(
+            self.spectra_dataframe.groupby(
+                list(self.spectra_dataframe.columns), sort=False
+            ).indices.values()
+        )
+        self.spectra_dataframe = None
+        for indices in scans:
+            rng.shuffle(indices)
+        rng.shuffle(scans)
+        scans = list(scans)
+
+        # Split the data evenly
+        num = len(scans) // folds
+        splits = [scans[i : i + num] for i in range(0, len(scans), num)]
+
+        if len(splits[-1]) < num:
+            splits[-2] += splits[-1]
+            splits = splits[:-1]
+
+        return tuple(utils.flatten(s) for s in splits)
+
+
 def _update_labels(scores, targets, eval_fdr=0.01, desc=True):
     """Return the label for each PSM, given it's score.
 
@@ -642,68 +835,6 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     return (scores - target_score) / (target_score - decoy_score)
 
 
-def targets_count_by_feature(file_name, psms_info, eval_fdr, columns, desc):
-    df = read_file(
-        file_name=file_name,
-        use_cols=[columns] + [psms_info["target_column"]],
-        target_column=psms_info["target_column"],
-    )
-
-    return (
-        _update_labels(
-            df.loc[:, columns],
-            targets=df.loc[:, psms_info["target_column"]],
-            eval_fdr=eval_fdr,
-            desc=desc,
-        )
-        == 1
-    ).sum()
-
-
-def find_best_feature(file_name, psms_info, eval_fdr):
-    best_feat = None
-    best_positives = 0
-    new_labels = None
-    for desc in (True, False):
-        num_passing = pd.Series(
-            [
-                targets_count_by_feature(
-                    file_name=file_name,
-                    psms_info=psms_info,
-                    eval_fdr=eval_fdr,
-                    columns=c,
-                    desc=desc,
-                )
-                for c in psms_info["feature_columns"]
-            ],
-            index=psms_info["feature_columns"],
-        )
-
-        feat_idx = num_passing.idxmax()
-        num_passing = num_passing[feat_idx]
-
-        if num_passing > best_positives:
-            best_positives = num_passing
-            best_feat = feat_idx
-            df = read_file(
-                file_name=file_name,
-                use_cols=[best_feat, psms_info["target_column"]],
-            )
-
-            new_labels = _update_labels(
-                scores=df.loc[:, best_feat],
-                targets=df[psms_info["target_column"]],
-                eval_fdr=eval_fdr,
-                desc=desc,
-            )
-            best_desc = desc
-
-    if best_feat is None:
-        raise RuntimeError("No PSMs found below the 'eval_fdr'.")
-
-    return best_feat, best_positives, new_labels, best_desc
-
-
 def update_labels(file_name, scores, target_column, eval_fdr=0.01, desc=True):
     df = read_file(
         file_name=file_name,
@@ -716,3 +847,14 @@ def update_labels(file_name, scores, target_column, eval_fdr=0.01, desc=True):
         eval_fdr=eval_fdr,
         desc=desc,
     )
+
+
+def read_file(file_name, use_cols=None, target_column=None):
+    with utils.open_file(file_name) as f:
+        df = pd.read_csv(
+            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
+        ).apply(pd.to_numeric, errors="ignore")
+    try:
+        return utils.convert_targets_column(df, target_column)
+    except:
+        return df

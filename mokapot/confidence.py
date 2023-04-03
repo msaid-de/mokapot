@@ -28,10 +28,10 @@ from joblib import Parallel, delayed
 
 from . import qvalues
 from . import utils
-from .dataset import find_best_feature
+from .dataset import read_file
 from .picked_protein import picked_protein
 from .writers import to_flashlfq, to_txt
-from .parsers.pin import read_file, convert_targets_column, read_file_in_chunks
+from .parsers.pin import read_file_in_chunks
 from .constants import CONFIDENCE_CHUNK_SIZE
 
 LOGGER = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class GroupedConfidence:
 
     Parameters
     ----------
-    psms_info : Dict
+    psms : Dict
         Dict contain information about percolator input.
     scores : np.ndarray
         A vector containing the score of each PSM.
@@ -82,8 +82,7 @@ class GroupedConfidence:
 
     def __init__(
         self,
-        file_name,
-        psms_info,
+        psms,
         scores,
         desc=True,
         eval_fdr=0.01,
@@ -95,40 +94,39 @@ class GroupedConfidence:
         prefixes=None,
     ):
         """Initialize a GroupedConfidence object"""
-        psms = read_file(
-            file_name,
-            use_cols=list(psms_info["feature_columns"])
-            + list(psms_info["metadata_columns"]),
+        data = read_file(
+            psms.filename,
+            use_cols=list(psms.feature_columns) + list(psms.metadata_columns),
         )
-        self.group_column = psms_info["group_column"]
-        psms_info["group_column"] = None
+        self.group_column = psms.group_column
+        psms.group_column = None
         scores = scores * (desc * 2 - 1)
 
         # Do TDC to eliminate multiples PSMs for a spectrum that may occur
         # in different groups.
         keep = "last" if desc else "first"
         scores = (
-            pd.Series(scores, index=psms.index).sample(frac=1).sort_values()
+            pd.Series(scores, index=data.index).sample(frac=1).sort_values()
         )
 
         idx = (
-            psms.loc[scores.index, :]
-            .drop_duplicates(psms_info["spectrum_columns"], keep=keep)
+            data.loc[scores.index, :]
+            .drop_duplicates(psms.spectrum_columns, keep=keep)
             .index
         )
 
         self._group_confidence_estimates = {}
         append_to_group = False
         group_file = "group_psms.csv"
-        for group, group_df in psms.groupby(self.group_column):
+        for group, group_df in data.groupby(self.group_column):
             LOGGER.info("Group: %s == %s", self.group_column, group)
             tdc_winners = group_df.index.intersection(idx)
             group_psms = group_df.loc[tdc_winners, :]
             group_scores = scores.loc[group_psms.index].values + 1
             group_psms.to_csv(group_file, sep="\t", index=False)
-            psms_info["file"] = [group_file]
+            psms.filename = group_file
             assign_confidence(
-                psms_info,
+                [psms],
                 [group_scores],
                 descs=[desc],
                 eval_fdr=eval_fdr,
@@ -252,13 +250,13 @@ class Confidence(object):
         "peptide_pairs": "Peptide Pairs",
     }
 
-    def __init__(self, psms_info, proteins=None):
+    def __init__(self, psms, proteins=None):
         """Initialize a PsmConfidence object."""
         self._score_column = "score"
-        self._target_column = psms_info["target_column"]
+        self._target_column = psms.target_column
         self._protein_column = "proteinIds"
-        self._group_column = psms_info["group_column"]
-        self._metadata_column = psms_info["metadata_columns"]
+        self._group_column = psms.group_column
+        self._metadata_column = psms.metadata_columns
 
         self.scores = None
         self.targets = None
@@ -409,7 +407,7 @@ class LinearConfidence(Confidence):
 
     Parameters
     ----------
-    psms_info : Dict
+    psms : Dict
         Dict contain information about percolator input.
     psms_path : Path
             File with unique psms.
@@ -442,7 +440,7 @@ class LinearConfidence(Confidence):
 
     def __init__(
         self,
-        psms_info,
+        psms,
         level_paths,
         levels,
         out_paths,
@@ -454,10 +452,10 @@ class LinearConfidence(Confidence):
         sep="\t",
     ):
         """Initialize a a LinearPsmConfidence object"""
-        super().__init__(psms_info, proteins)
-        self._target_column = psms_info["target_column"]
-        self._psm_columns = psms_info["spectrum_columns"]
-        self._peptide_column = psms_info["peptide_column"]
+        super().__init__(psms, proteins)
+        self._target_column = psms.target_column
+        self._psm_columns = psms.spectrum_columns
+        self._peptide_column = psms.peptide_column
         self._protein_column = "proteinIds"
         self._eval_fdr = eval_fdr
         self.deduplication = deduplication
@@ -542,7 +540,7 @@ class LinearConfidence(Confidence):
         if self._proteins:
             data = read_file(level_paths[1])
             data = data.apply(pd.to_numeric, errors="ignore")
-            convert_targets_column(
+            utils.convert_targets_column(
                 data=data, target_column=self._target_column
             )
             proteins = picked_protein(
@@ -574,7 +572,7 @@ class LinearConfidence(Confidence):
             data = read_file(data_path)
             data = data.apply(pd.to_numeric, errors="ignore")
             data_columns = list(data.columns)
-            convert_targets_column(
+            utils.convert_targets_column(
                 data=data, target_column=self._target_column
             )
             self.scores = data.loc[:, self._score_column].values
@@ -667,7 +665,7 @@ class CrossLinkedConfidence(Confidence):
             File with unique psms.
     peptides_path : Path
             File with unique peptides.
-    psms_info : Dict
+    psms : Dict
         Dict contain information about percolator input.
     desc : bool
         Are higher scores better?
@@ -684,7 +682,7 @@ class CrossLinkedConfidence(Confidence):
 
     def __init__(
         self,
-        psms_info,
+        psms,
         psms_path,
         peptides_path,
         desc=True,
@@ -694,10 +692,10 @@ class CrossLinkedConfidence(Confidence):
         sep="\t",
     ):
         """Initialize a CrossLinkedConfidence object"""
-        super().__init__(psms_info)
-        self._target_column = psms_info["target_column"]
-        self._psm_columns = psms_info["spectrum_columns"]
-        self._peptide_column = psms_info["peptide_column"]
+        super().__init__(psms)
+        self._target_column = psms.target_column
+        self._psm_columns = psms.spectrum_columns
+        self._peptide_column = psms.peptide_column
 
         self._assign_confidence(
             psms_path,
@@ -756,7 +754,7 @@ class CrossLinkedConfidence(Confidence):
                 data_path, use_cols=self._metadata_column + ["score"]
             )
             data = data.apply(pd.to_numeric, errors="ignore")
-            convert_targets_column(
+            utils.convert_targets_column(
                 data=data, target_column=self._target_column
             )
             self.scores = data.loc[:, self._score_column].values
@@ -774,7 +772,7 @@ class CrossLinkedConfidence(Confidence):
 
 # Functions -------------------------------------------------------------------
 def assign_confidence(
-    psms_info,
+    psms,
     scores=None,
     descs=None,
     eval_fdr=0.01,
@@ -792,7 +790,7 @@ def assign_confidence(
 
     Parameters
     ----------
-    psms_info : dict
+    psms : dict
         All info about the input data
     scores : numpy.ndarray
         The scores by which to rank the PSMs. The default, :code:`None`,
@@ -831,13 +829,11 @@ def assign_confidence(
     """
     if scores is None:
         scores = []
-        for file_name in psms_info["file"]:
-            feat, _, _, desc = find_best_feature(
-                file_name, psms_info, eval_fdr
-            )
+        for p in psms:
+            feat, _, _, desc = p.find_best_feature(eval_fdr)
             LOGGER.info("Selected %s as the best feature.", feat)
             scores.append(
-                read_file(file_name=file_name, use_cols=[feat]).values
+                read_file(file_name=p.filename, use_cols=[feat]).values
             )
 
     psms_path = "psms.csv"
@@ -860,10 +856,8 @@ def assign_confidence(
         "proteinIds",
     ]
 
-    for file_name, score, desc, prefix in zip(
-        psms_info["file"], scores, descs, prefixes
-    ):
-        if psms_info["group_column"] is None:
+    for p, score, desc, prefix in zip(psms, scores, descs, prefixes):
+        if p.group_column is None:
             out_files = []
             for level in levels:
                 dest_dir_prefix = dest_dir
@@ -883,9 +877,9 @@ def assign_confidence(
                             fp.write(f"{sep.join(output_columns)}\n")
                     out_files[-1].append(outfile_d)
             reader = read_file_in_chunks(
-                file=file_name,
+                file=p.filename,
                 chunk_size=CONFIDENCE_CHUNK_SIZE,
-                use_cols=psms_info["metadata_columns"],
+                use_cols=p.metadata_columns,
             )
             scores_slices = utils.create_chunks(
                 score, chunk_size=CONFIDENCE_CHUNK_SIZE
@@ -895,7 +889,7 @@ def assign_confidence(
                 delayed(save_sorted_metadata_chunks)(
                     chunk_metadata,
                     score_chunk,
-                    psms_info,
+                    p,
                     deduplication,
                     i,
                     sep,
@@ -913,7 +907,7 @@ def assign_confidence(
             LOGGER.info("Performing target-decoy competition...")
             LOGGER.info(
                 "Keeping the best match per %s columns...",
-                "+".join(psms_info["spectrum_columns"]),
+                "+".join(p.spectrum_columns),
             )
 
             with open(psms_path, "w") as f_psm:
@@ -951,7 +945,7 @@ def assign_confidence(
             [os.remove(sc_path) for sc_path in scores_metadata_paths]
 
             LinearConfidence(
-                psms_info=psms_info,
+                psms=p,
                 levels=levels,
                 level_paths=level_data_path,
                 out_paths=out_files,
@@ -962,32 +956,31 @@ def assign_confidence(
                 deduplication=deduplication,
                 proteins=proteins,
             )
+            if prefix is None:
+                append_to_output_file = True
         else:
             LOGGER.info("Assigning confidence within groups...")
             GroupedConfidence(
-                file_name,
-                psms_info,
+                p,
                 score,
                 eval_fdr=eval_fdr,
                 desc=desc,
                 dest_dir=dest_dir,
-                prefixes=[prefix],
                 sep=sep,
                 decoys=decoys,
                 proteins=proteins,
                 combine=combine,
+                prefixes=[prefix],
             )
 
 
 def save_sorted_metadata_chunks(
-    chunk_metadata, score_chunk, psms_info, deduplication, i, sep
+    chunk_metadata, score_chunk, psms, deduplication, i, sep
 ):
     chunk_metadata["score"] = score_chunk
     chunk_metadata.sort_values(by="score", ascending=False, inplace=True)
     if deduplication:
-        chunk_metadata = chunk_metadata.drop_duplicates(
-            psms_info["spectrum_columns"]
-        )
+        chunk_metadata = chunk_metadata.drop_duplicates(psms.spectrum_columns)
     chunk_metadata.to_csv(
         f"scores_metadata_{i}.csv",
         sep=sep,
