@@ -342,12 +342,8 @@ def parse_in_chunks(psms, train_idx, chunk_size):
             for chunk in reader
         )
     return Parallel(n_jobs=-1, require="sharedmem")(
-        delayed(concat_chunks)(df=df) for df in train_psms
+        delayed(pd.concat)(df) for df in train_psms
     )
-
-
-def concat_chunks(df):
-    return pd.concat(df)
 
 
 def _check_column(col, columns, default):

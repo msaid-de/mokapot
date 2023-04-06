@@ -310,7 +310,9 @@ def make_train_sets(test_idx, subset_max_train, data_size, rng):
                 k += chunk_range
             train_idx[file_idx] += list(set(range(k, ds)) - set(idx))
             train_idx_size += len(train_idx[file_idx])
-        if len(subset_max_train_per_file) > 0:
+        if len(subset_max_train_per_file) > 0 and train_idx_size > sum(
+            subset_max_train_per_file
+        ):
             LOGGER.info(
                 "Subsetting PSMs (%i) to (%i).",
                 train_idx_size,
