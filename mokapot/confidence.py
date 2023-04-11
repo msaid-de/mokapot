@@ -19,7 +19,6 @@ import os
 import glob
 from pathlib import Path
 
-import numpy as np
 import logging
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -27,7 +26,13 @@ from triqler import qvality
 from joblib import Parallel, delayed
 
 from . import qvalues
-from . import utils
+from .utils import (
+    create_chunks,
+    groupby_max,
+    convert_targets_column,
+    merge_sort,
+    get_unique_psms_and_peptides,
+)
 from .dataset import read_file
 from .picked_protein import picked_protein
 from .writers import to_flashlfq, to_txt
@@ -302,16 +307,14 @@ class Confidence(object):
             use_cols=[i for i in columns if i != self._target_column],
         )
 
-        self.scores = utils.create_chunks(
+        self.scores = create_chunks(
             self.scores, chunk_size=CONFIDENCE_CHUNK_SIZE
         )
-        self.qvals = utils.create_chunks(
+        self.qvals = create_chunks(
             self.qvals, chunk_size=CONFIDENCE_CHUNK_SIZE
         )
-        self.peps = utils.create_chunks(
-            self.peps, chunk_size=CONFIDENCE_CHUNK_SIZE
-        )
-        self.targets = utils.create_chunks(
+        self.peps = create_chunks(self.peps, chunk_size=CONFIDENCE_CHUNK_SIZE)
+        self.targets = create_chunks(
             self.targets, chunk_size=CONFIDENCE_CHUNK_SIZE
         )
 
@@ -346,7 +349,7 @@ class Confidence(object):
         psm_columns : str or list of str
             The columns that define a PSM.
         """
-        psm_idx = utils.groupby_max(psms, psm_columns, self._score_column)
+        psm_idx = groupby_max(psms, psm_columns, self._score_column)
         return psms.loc[psm_idx, :]
 
     def plot_qvalues(self, level="psms", threshold=0.1, ax=None, **kwargs):
@@ -502,7 +505,7 @@ class LinearConfidence(Confidence):
         if self._proteins:
             data = read_file(level_paths[1])
             data = data.apply(pd.to_numeric, errors="ignore")
-            utils.convert_targets_column(
+            convert_targets_column(
                 data=data, target_column=self._target_column
             )
             proteins = picked_protein(
@@ -519,15 +522,15 @@ class LinearConfidence(Confidence):
             level_paths += [proteins_path]
             out_paths += [
                 os.path.sep.join(
-                    p.split(os.path.sep)[:-1]
+                    _psms.split(os.path.sep)[:-1]
                     + [
                         ".".join(
-                            p.split(os.path.sep)[-1].split(".")[:-1]
+                            _psms.split(os.path.sep)[-1].split(".")[:-1]
                             + ["proteins"]
                         )
                     ]
                 )
-                for p in out_paths[0]
+                for _psms in out_paths[0]
             ]
             LOGGER.info("\t- Found %i unique protein groups.", len(proteins))
         for level, data_path, out_path in zip(levels, level_paths, out_paths):
@@ -759,11 +762,11 @@ def assign_confidence(
     """
     if scores is None:
         scores = []
-        for p in psms:
-            feat, _, _, desc = p.find_best_feature(eval_fdr)
+        for _psms in psms:
+            feat, _, _, desc = _psms.find_best_feature(eval_fdr)
             LOGGER.info("Selected %s as the best feature.", feat)
             scores.append(
-                read_file(file_name=p.filename, use_cols=[feat]).values
+                read_file(file_name=_psms.filename, use_cols=[feat]).values
             )
 
     psms_path = "psms.csv"
@@ -786,8 +789,8 @@ def assign_confidence(
         "proteinIds",
     ]
 
-    for p, score, desc, prefix in zip(psms, scores, descs, prefixes):
-        if p.group_column is None:
+    for _psms, score, desc, prefix in zip(psms, scores, descs, prefixes):
+        if _psms.group_column is None:
             out_files = []
             for level in levels:
                 dest_dir_prefix = dest_dir
@@ -807,11 +810,11 @@ def assign_confidence(
                             fp.write(f"{sep.join(output_columns)}\n")
                     out_files[-1].append(outfile_d)
             reader = read_file_in_chunks(
-                file=p.filename,
+                file=_psms.filename,
                 chunk_size=CONFIDENCE_CHUNK_SIZE,
-                use_cols=p.metadata_columns,
+                use_cols=_psms.metadata_columns,
             )
-            scores_slices = utils.create_chunks(
+            scores_slices = create_chunks(
                 score, chunk_size=CONFIDENCE_CHUNK_SIZE
             )
 
@@ -819,7 +822,7 @@ def assign_confidence(
                 delayed(save_sorted_metadata_chunks)(
                     chunk_metadata,
                     score_chunk,
-                    p,
+                    _psms,
                     deduplication,
                     i,
                     sep,
@@ -830,14 +833,14 @@ def assign_confidence(
             )
 
             scores_metadata_paths = glob.glob("scores_metadata_*")
-            iterable_sorted = utils.merge_sort(
+            iterable_sorted = merge_sort(
                 scores_metadata_paths, col_score="score", sep=sep
             )
             LOGGER.info("Assigning confidence...")
             LOGGER.info("Performing target-decoy competition...")
             LOGGER.info(
                 "Keeping the best match per %s columns...",
-                "+".join(p.spectrum_columns),
+                "+".join(_psms.spectrum_columns),
             )
 
             with open(psms_path, "w") as f_psm:
@@ -850,7 +853,7 @@ def assign_confidence(
                 (
                     unique_psms,
                     unique_peptides,
-                ) = utils.get_unique_psms_and_peptides(
+                ) = get_unique_psms_and_peptides(
                     iterable=iterable_sorted,
                     out_psms="psms.csv",
                     out_peptides="peptides.csv",
@@ -875,7 +878,7 @@ def assign_confidence(
             [os.remove(sc_path) for sc_path in scores_metadata_paths]
 
             LinearConfidence(
-                psms=p,
+                psms=_psms,
                 levels=levels,
                 level_paths=level_data_path,
                 out_paths=out_files,
@@ -891,7 +894,7 @@ def assign_confidence(
         else:
             LOGGER.info("Assigning confidence within groups...")
             GroupedConfidence(
-                p,
+                _psms,
                 score,
                 eval_fdr=eval_fdr,
                 desc=desc,

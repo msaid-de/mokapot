@@ -7,7 +7,13 @@ import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
 
-from .. import utils
+from ..utils import (
+    open_file,
+    tuplize,
+    create_chunks,
+    convert_targets_column,
+    flatten,
+)
 from ..dataset import OnDiskPsmDataset, read_file
 from ..constants import (
     CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
@@ -107,7 +113,7 @@ def read_pin(
             rt_column=rt_column,
             charge_column=charge_column,
         )
-        for pin_file in utils.tuplize(pin_files)
+        for pin_file in tuplize(pin_files)
     ]
 
 
@@ -188,7 +194,7 @@ def read_percolator(
         )
 
     # Check that features don't have missing values:
-    feat_slices = utils.create_chunks(
+    feat_slices = create_chunks(
         data=features + spectra + labels,
         chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
     )
@@ -202,12 +208,12 @@ def read_percolator(
         )
         for c in feat_slices
     )
-    df_spectra = utils.convert_targets_column(
+    df_spectra = convert_targets_column(
         pd.concat(df_spectra).apply(pd.to_numeric, errors="ignore"),
         target_column=labels[0],
     )
     features_to_drop = [drop for drop in features_to_drop if drop]
-    features_to_drop = utils.flatten(features_to_drop)
+    features_to_drop = flatten(features_to_drop)
     if len(features_to_drop) > 1:
         LOGGER.warning("Missing values detected in the following features:")
         for col in features_to_drop:
@@ -248,7 +254,7 @@ def drop_missing_values_and_fill_spectra_dataframe(
     file, column, spectra, df_spectra
 ):
     na_mask = pd.DataFrame([], columns=list(set(column) - set(spectra)))
-    with utils.open_file(file) as f:
+    with open_file(file) as f:
         reader = read_file_in_chunks(
             file=f,
             use_cols=column,
@@ -283,7 +289,7 @@ def read_file_in_chunks(file, chunk_size, use_cols):
 
 
 def get_column_names_from_file(file):
-    with utils.open_file(file) as perc:
+    with open_file(file) as perc:
         return perc.readline().rstrip().split("\t")
 
 
@@ -318,8 +324,8 @@ def parse_in_chunks(psms, train_idx, chunk_size):
 
     Parameters
     ----------
-    psms : dict object
-        contains all psms info.
+    psms : OnDiskPsmDataset
+        A collection of PSMs.
     train_idx : list of list of indexes
         The indexes to select from data.
     chunk_size : int
@@ -331,11 +337,11 @@ def parse_in_chunks(psms, train_idx, chunk_size):
         list of dataframes
     """
     train_psms = [[] for _ in range(len(train_idx))]
-    for p, idx in zip(psms, zip(*train_idx)):
+    for _psms, idx in zip(psms, zip(*train_idx)):
         reader = read_file_in_chunks(
-            file=p.filename,
+            file=_psms.filename,
             chunk_size=chunk_size,
-            use_cols=p.columns,
+            use_cols=_psms.columns,
         )
         Parallel(n_jobs=-1, require="sharedmem")(
             delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
@@ -361,7 +367,9 @@ def _check_column(col, columns, default):
 
 
 def read_data_for_rescale(psms, subset_max_rescale):
-    data_sizes = [sum(1 for line in open(p.filename)) - 1 for p in psms]
+    data_sizes = [
+        sum(1 for line in open(_psms.filename)) - 1 for _psms in psms
+    ]
     skip_rows_per_file = [None for _ in psms]
     if subset_max_rescale and subset_max_rescale < sum(data_sizes):
         subset_max_rescale_per_file = [
@@ -386,10 +394,10 @@ def read_data_for_rescale(psms, subset_max_rescale):
     return pd.concat(
         [
             read_file(
-                p.filename,
-                use_cols=p.feature_columns,
-                target_column=p.target_column,
+                _psms.filename,
+                use_cols=_psms.feature_columns,
+                target_column=_psms.target_column,
             )
-            for p, skip_rows in zip(psms, skip_rows_per_file)
+            for _psms, skip_rows in zip(psms, skip_rows_per_file)
         ]
     ).reset_index(drop=True)

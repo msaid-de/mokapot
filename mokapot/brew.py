@@ -114,17 +114,23 @@ def brew(
 
         # Check that all of the datasets have the same features:
     feat_set = set(psms[0].feature_columns)
-    if not all([set(p.feature_columns) == feat_set for p in psms]):
+    if not all([set(_psms.feature_columns) == feat_set for _psms in psms]):
         raise ValueError("All collections of PSMs must use the same features.")
 
-    data_size = [len(p.spectra_dataframe) for p in psms]
+    data_size = [len(_psms.spectra_dataframe) for _psms in psms]
     if sum(data_size) > 1:
         LOGGER.info("Found %i total PSMs.", sum(data_size))
         num_targets = sum(
-            [(p.spectra_dataframe[p.target_column]).sum() for p in psms]
+            [
+                (_psms.spectra_dataframe[_psms.target_column]).sum()
+                for _psms in psms
+            ]
         )
         num_decoys = sum(
-            [(~p.spectra_dataframe[p.target_column]).sum() for p in psms]
+            [
+                (~_psms.spectra_dataframe[_psms.target_column]).sum()
+                for _psms in psms
+            ]
         )
         LOGGER.info(
             "  - %i target PSMs and %i decoy PSMs detected.",
@@ -132,7 +138,7 @@ def brew(
             num_decoys,
         )
     LOGGER.info("Splitting PSMs into %i folds...", folds)
-    test_folds_idx = [p._split(folds, rng) for p in psms]
+    test_folds_idx = [_psms._split(folds, rng) for _psms in psms]
 
     # If trained models are provided, use the them as-is.
     try:
@@ -181,17 +187,18 @@ def brew(
     # If we reset, just use the original model on all the folds:
     if reset:
         scores = [
-            p.calibrate_scores(
-                _predict_with_ensemble(psms=p, models=[model]), test_fdr
+            _psms.calibrate_scores(
+                _predict_with_ensemble(psms=_psms, models=[model]), test_fdr
             )
-            for p in psms
+            for _psms in psms
         ]
 
     # If we don't reset, assign scores to each fold:
     elif all([m.is_trained for m in models]):
         if ensemble:
             scores = [
-                _predict_with_ensemble(psms=p, models=models) for p in psms
+                _predict_with_ensemble(psms=_psms, models=models)
+                for _psms in psms
             ]
         else:
             # generate model index for each psm in all folds
@@ -232,8 +239,8 @@ def brew(
         feat_total = 0
 
     preds = [
-        update_labels(p.filename, s, p.target_column, test_fdr)
-        for p, s in zip(psms, scores)
+        update_labels(_psms.filename, s, _psms.target_column, test_fdr)
+        for _psms, s in zip(psms, scores)
     ]
 
     pred_total = sum([(pred == 1).sum() for pred in preds])
@@ -245,10 +252,10 @@ def brew(
         descs = [desc] * len(psms)
         scores = [
             read_file(
-                p.file_name,
+                _psms.file_name,
                 use_cols=[feat],
             ).values
-            for p in psms
+            for _psms in psms
         ]
 
     else:
@@ -379,7 +386,7 @@ def _predict(models_idx, psms, models, test_fdr):
     numpy.ndarray
         A :py:class:`numpy.ndarray` containing the new scores.
     """
-    for p, mod_idx in zip(psms, models_idx):
+    for _psms, mod_idx in zip(psms, models_idx):
         scores = []
 
         model_test_idx = utils.create_chunks(
@@ -390,9 +397,9 @@ def _predict(models_idx, psms, models, test_fdr):
         targets = [[] for _ in range(n_folds)]
         orig_idx = [[] for _ in range(n_folds)]
         reader = read_file_in_chunks(
-            file=p.filename,
+            file=_psms.filename,
             chunk_size=CHUNK_SIZE_ROWS_PREDICTION,
-            use_cols=p.columns,
+            use_cols=_psms.columns,
         )
         for i, psms_slice in enumerate(reader):
             psms_slice["fold"] = model_test_idx.pop(0)
@@ -401,7 +408,7 @@ def _predict(models_idx, psms, models, test_fdr):
                 for i in range(n_folds)
             ]
             psms_slice = [
-                _create_psms(p, psm_slice, enforce_checks=False)
+                _create_psms(_psms, psm_slice, enforce_checks=False)
                 for psm_slice in psms_slice
             ]
             [
@@ -413,10 +420,10 @@ def _predict(models_idx, psms, models, test_fdr):
                 delayed(predict_fold)(
                     model=models[mod_idx],
                     fold=mod_idx,
-                    psms=p,
+                    psms=_psms,
                     scores=fold_scores,
                 )
-                for mod_idx, p in enumerate(psms_slice)
+                for mod_idx, _psms in enumerate(psms_slice)
             )
             del psms_slice
         del reader
