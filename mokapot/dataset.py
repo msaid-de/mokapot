@@ -1,4 +1,4 @@
-"""The :py:class:`LinearPsmDataset` classe is used to define a collection
+"""The :py:class:`LinearPsmDataset` class is used to define a collection
 peptide-spectrum matches. The :py:class:`LinearPsmDataset` class is suitable for
 most types of data-dependent acquisition proteomics experiments.
 
@@ -81,10 +81,12 @@ class PsmDataset(ABC):
         group_column,
         other_columns,
         copy_data,
+        rng,
     ):
         """Initialize an object"""
         self._data = psms.copy(deep=copy_data).reset_index(drop=True)
         self._proteins = None
+        self.rng = rng
 
         # Set columns
         self._spectrum_columns = utils.tuplize(spectrum_columns)
@@ -170,6 +172,16 @@ class PsmDataset(ABC):
     def has_proteins(self):
         """Has a FASTA file been added?"""
         return self._proteins is not None
+
+    @property
+    def rng(self):
+        """The random number generator for model training."""
+        return self._rng
+
+    @rng.setter
+    def rng(self, rng):
+        """Set the random number generator"""
+        self._rng = np.random.default_rng(rng)
 
     def add_proteins(self, proteins, **kwargs):
         """Add protein information to the dataset.
@@ -331,6 +343,10 @@ class LinearPsmDataset(PsmDataset):
         original collection of PSMs is not propagated to this object. This uses
         more memory, but is safer since it prevents accidental modification of
         the underlying data.
+    rng : int or np.random.Generator, optional
+        A seed or generator used for cross-validation split creation and to
+        break ties, or ``None`` to use the default random number generator
+        state.
     enforce_checks : bool, optional
         If True, it is checked whether decoys and targets exist and an error is thrown
         when this is not the case. Per default this check is True, but for prediction
@@ -347,6 +363,8 @@ class LinearPsmDataset(PsmDataset):
     targets : numpy.ndarray
     columns : list of str
     has_proteins : bool
+    rng : numpy.random.Generator
+       The random number generator.
     """
 
     def __init__(
@@ -365,6 +383,7 @@ class LinearPsmDataset(PsmDataset):
         rt_column=None,
         charge_column=None,
         copy_data=True,
+        rng=None,
         enforce_checks=True,
     ):
         """Initialize a PsmDataset object."""
@@ -397,6 +416,7 @@ class LinearPsmDataset(PsmDataset):
             group_column=group_column,
             other_columns=other_columns,
             copy_data=copy_data,
+            rng=rng,
         )
 
         self._data[target_column] = self._data[target_column].astype(bool)
@@ -437,7 +457,6 @@ class LinearPsmDataset(PsmDataset):
         return self.data.loc[:, self._peptide_column]
 
     def _update_labels(self, scores, eval_fdr=0.01, desc=True):
-
         return _update_labels(scores=scores, targets=self.targets, desc=desc)
 
 
@@ -623,14 +642,16 @@ def calibrate_scores(scores, targets, eval_fdr, desc=True):
     return (scores - target_score) / (target_score - decoy_score)
 
 
-def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
+def targets_count_by_feature(file_name, psms_info, eval_fdr, columns, desc):
     df = read_file(
-        file_name=psms_info["file"],
-        use_cols=columns + [psms_info["target_column"]],
+        file_name=file_name,
+        use_cols=[columns] + [psms_info["target_column"]],
+        target_column=psms_info["target_column"],
     )
+
     return (
-        df.loc[:, columns].apply(
-            _update_labels,
+        _update_labels(
+            df.loc[:, columns],
             targets=df.loc[:, psms_info["target_column"]],
             eval_fdr=eval_fdr,
             desc=desc,
@@ -639,23 +660,25 @@ def targets_count_by_feature(psms_info, eval_fdr, columns, desc):
     ).sum()
 
 
-def find_best_feature(psms_info, eval_fdr):
+def find_best_feature(file_name, psms_info, eval_fdr):
     best_feat = None
     best_positives = 0
     new_labels = None
-
     for desc in (True, False):
-        labs = [
-            targets_count_by_feature(
-                psms_info=psms_info,
-                eval_fdr=eval_fdr,
-                columns=list(c),
-                desc=desc,
-            )
-            for c in psms_info["feature_columns"]
-        ]
+        num_passing = pd.Series(
+            [
+                targets_count_by_feature(
+                    file_name=file_name,
+                    psms_info=psms_info,
+                    eval_fdr=eval_fdr,
+                    columns=c,
+                    desc=desc,
+                )
+                for c in psms_info["feature_columns"]
+            ],
+            index=psms_info["feature_columns"],
+        )
 
-        num_passing = pd.concat(labs)
         feat_idx = num_passing.idxmax()
         num_passing = num_passing[feat_idx]
 
@@ -663,7 +686,7 @@ def find_best_feature(psms_info, eval_fdr):
             best_positives = num_passing
             best_feat = feat_idx
             df = read_file(
-                file_name=psms_info["file"],
+                file_name=file_name,
                 use_cols=[best_feat, psms_info["target_column"]],
             )
 
@@ -681,13 +704,15 @@ def find_best_feature(psms_info, eval_fdr):
     return best_feat, best_positives, new_labels, best_desc
 
 
-def update_labels(psms_info, scores, eval_fdr=0.01, desc=True):
+def update_labels(file_name, scores, target_column, eval_fdr=0.01, desc=True):
     df = read_file(
-        file_name=psms_info["file"], use_cols=[psms_info["target_column"]]
+        file_name=file_name,
+        use_cols=[target_column],
+        target_column=target_column,
     )
     return _update_labels(
         scores=scores,
-        targets=df[psms_info["target_column"]],
+        targets=df[target_column],
         eval_fdr=eval_fdr,
         desc=desc,
     )

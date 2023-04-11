@@ -1,5 +1,54 @@
 # Changelog for mokapot  
 
+## [Unreleased]
+### Breaking changes
+- Mokapot now uses `numpy.random.Generator` instead of the deprecated `numpy.random.RandomState` API. 
+  New `rng` arguments have been added to functions and classes that rely on randomness in lieu of setting a global random seed with `np.random.seed()`. Thanks @sjust-seerbio!
+
+## [0.9.1] - 2022-12-14
+### Changed
+- Cross-validation classes are now detected by looking for inheritance from the `sklearn.model_selection._search.BaseSearchCV` class.
+
+### Fixed
+- Fixed backward compatibility issue for Python <3.10.
+
+## [0.9.0] - 2022-12-02
+### Added
+- Support for plugins, allowing mokapot to use new models.
+- Added a custom Docker image with optional dependencies.
+
+### Fixed
+- Confidence objects are now picklable.
+
+### Changes
+- Updated GitHub Actions.
+- Migrated to a full pyproject.toml setuptools build. Thanks @jspaezp!
+
+## [0.8.3] - 2022-07-20
+### Fixed
+- Fixed the reported mokapot score when group FDR is used.
+
+## [0.8.2] - 2022-07-18
+### Added
+- `mokapot.Model()` objects now recored the CV fold that they were fit on.
+  This means that they can be provided to `mokapot.brew()` in any order 
+  and still maintain proper cross-validation bins.
+
+### Fixed
+- Resolved issue where models were required to have an intercept term.
+- The PepXML parser would sometimes try and log transform features with `0`'s, resulting in missing values.
+
+## [0.8.1] - 2022-06-24
+
+### Added
+- Support for previously trained models in the `brew()` function and the CLI 
+  using the `--load_models` argument. Thanks @sambenfredj!
+
+### Fixed
+- Using `clip_nterm_methionine=True` could result in peptides of length
+  `min_length-1`.
+- Links to example datasets in the documentation.
+
 ## [0.8.0] - 2022-03-11
 
 Thanks to @sambenfredj, @gessulat, @tkschmidt, and @MatthewThe for 

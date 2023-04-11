@@ -1,11 +1,10 @@
 """
 This is the command line interface for mokapot
 """
-import os
+import datetime
+import logging
 import sys
 import time
-import logging
-import datetime
 import warnings
 from functools import partial
 from pathlib import Path
@@ -20,14 +19,21 @@ from .parsers.fasta import read_fasta
 from .brew import brew
 from .model import PercolatorModel, load_model
 from .confidence import assign_confidence
+from .plugins import get_plugins
 
 
 def main():
     """The CLI entry point"""
     start = time.time()
+    plugins = get_plugins()
 
     # Get command line arguments
-    config = Config()
+    parser = Config().parser
+    for plugin_name, plugin in plugins.items():
+        parsergroup = parser.add_argument_group(plugin_name)
+        plugin.add_arguments(parsergroup)
+
+    config = Config(parser)
 
     # Setup logging
     verbosity_dict = {
@@ -54,13 +60,23 @@ def main():
     logging.info("")
     logging.info("Starting Analysis")
     logging.info("=================")
+    logging.debug("Loaded plugins: %s", plugins.keys())
 
     np.random.seed(config.seed)
 
     # Parse Datasets
     parse = get_parser(config)
-    dataset = parse(config.psm_files)
+    enabled_plugins = {p: plugins[p]() for p in config.plugin}
 
+    datasets = parse(config.psm_files)
+    if config.aggregate or len(config.psm_files) == 1:
+        for plugin in enabled_plugins.values():
+            datasets = plugin.process_data(datasets, config)
+        prefixes = [None for f in config.psm_files]
+    else:
+        for plugin in enabled_plugins.values():
+            datasets = [plugin.process_data(ds, config) for ds in datasets]
+        prefixes = [Path(f).stem for f in config.psm_files]
     # Parse FASTA, if required:
     if config.proteins is not None:
         logging.info("Protein-level confidence estimates enabled.")
@@ -78,59 +94,80 @@ def main():
         proteins = None
 
     # Define a model:
-    if config.init_weights:
+    model = None
+    if config.load_models:
         data_to_rescale = None
         if config.rescale:
             data_to_rescale = read_data_for_rescale(
-                psms_info=dataset, subset_max_rescale=config.subset_max_rescale
-            )
-        model_files = os.listdir(str(config.init_weights))
-        if len(model_files) != config.folds:
-            raise RuntimeError(
-                "Number of loaded models should be equal to the number of folds."
+                psms_info=datasets,
+                subset_max_rescale=config.subset_max_rescale,
             )
         model = [
-            load_model(
-                os.path.join(str(config.init_weights), model_file),
-                data_to_rescale,
-            )
-            for model_file in model_files
+            load_model(model_file, data_to_rescale)
+            for model_file in config.load_models
         ]
-    else:
+    elif enabled_plugins:
+        plugin_models = {}
+        for plugin_name, plugin in enabled_plugins.items():
+            model = plugin.get_model(config)
+            if model is not None:
+                logging.debug(f"Loaded model for {plugin_name}")
+                plugin_models[plugin_name] = model
+
+        if not plugin_models:
+            logging.info(
+                "No models were defined by plugins. Using default model."
+            )
+            model = None
+        else:
+            first_mod_name = list(plugin_models.keys())[0]
+            if len(plugin_models) > 1:
+                logging.warning(
+                    "More than one model was defined by plugins."
+                    " Using the first one. (%s)",
+                    first_mod_name,
+                )
+            model = list(plugin_models.values())[0]
+
+    if model is None:
+        logging.debug(f"Loading Percolator model.")
         model = PercolatorModel(
             train_fdr=config.train_fdr,
             max_iter=config.max_iter,
             direction=config.direction,
             override=config.override,
+            rng=config.seed,
         )
 
     # Fit the models:
     psms_info, models, scores, desc = brew(
-        dataset,
+        datasets,
         model=model,
         test_fdr=config.test_fdr,
         folds=config.folds,
         max_workers=config.max_workers,
-        seed=config.seed,
         subset_max_train=config.subset_max_train,
         ensemble=config.ensemble,
+        rng=config.seed,
     )
     logging.info("")
+    if config.dest_dir is not None:
+        Path(config.dest_dir).mkdir(exist_ok=True)
     deduplication = not config.skip_deduplication
+    if config.file_root is not None:
+        config.dest_dir = f"{Path(config.dest_dir, config.file_root)}."
     assign_confidence(
         psms_info=psms_info,
         scores=scores,
         eval_fdr=config.test_fdr,
-        desc=desc,
+        descs=desc,
         dest_dir=config.dest_dir,
-        file_root=config.file_root,
         decoys=config.keep_decoys,
         deduplication=deduplication,
         proteins=proteins,
+        prefixes=prefixes,
     )
 
-    if config.dest_dir is not None:
-        Path(config.dest_dir).mkdir(exist_ok=True)
     if config.save_models:
         logging.info("Saving models...")
         for i, trained_model in enumerate(models):

@@ -1,11 +1,8 @@
 """
 This module estimates q-values.
 """
-import os
 import numpy as np
 import numba as nb
-
-from .constants import TDC_SEP, TDC_BUFFER_SIZE
 
 
 def tdc(scores, target, desc=True):
@@ -222,95 +219,3 @@ def _fdr2qvalue(fdr, num_total, met, indices):
         qvals[group] = min_q
 
     return qvals
-
-
-def tdc_ondisk(
-    iterable_sorted,
-    out_path,
-):
-    fdr_tmp_path = "scores_fdr.csv"
-    fdr_ondisk(iterable_sorted, fdr_tmp_path)
-    return qvals_ondisk(
-        file_path=fdr_tmp_path,
-        out_file=out_path,
-    )
-
-
-def fdr_ondisk(iterable_sorted, out_path):
-    cum_targets = 0
-    cum_decoys = 0
-    batch = []
-    for row_idx, row in enumerate(iterable_sorted):
-        row = [float(val) for val in row.split(TDC_SEP)]
-        index = int(float(row[0]))
-        score = float(row[1])
-        label = int(float(row[2]))
-
-        if label == 0:
-            cum_decoys += 1
-        elif label == 1:
-            cum_targets += 1
-        else:
-            raise ValueError(f"unknown label input : {label}")
-
-        fdr = np.divide(
-            (cum_decoys + 1),
-            cum_targets,
-            out=np.ones_like(cum_targets, dtype=float),
-            where=(cum_targets != 0),
-        )
-
-        batch.append(np.array([index, score, label, fdr]))
-        if len(batch) > TDC_BUFFER_SIZE:
-            with open(out_path, "ab") as fp:
-                np.savetxt(fp, batch, delimiter=TDC_SEP)
-            batch = []
-
-    if len(batch) > 0:
-        with open(out_path, "ab") as fp:
-            np.savetxt(fp, batch, delimiter=TDC_SEP)
-    del batch
-    return out_path
-
-
-def qvals_ondisk(
-    file_path,
-    out_file,
-):
-    min_q = 1
-
-    prev_score = None
-    group_fdr = []
-    batch = []
-    for line_idx, line in enumerate(reversed(list(open(file_path)))):
-        line = [
-            float(line.split(TDC_SEP)[0]),
-            float(line.split(TDC_SEP)[1]),
-            int(float(line.split(TDC_SEP)[2])),
-            float(line.split(TDC_SEP)[3]),
-        ]
-        curr_score = line[1]
-        curr_fdr = line[3]
-
-        if curr_score == prev_score:
-            group_fdr.append(line)
-        else:
-            if len(group_fdr) == 0:
-                group_fdr.append(line)
-            if curr_fdr < min_q:
-                min_q = curr_fdr
-            for row in group_fdr:
-                row.append(min_q)
-                batch.append(row)
-            group_fdr = []
-        if len(batch) > TDC_BUFFER_SIZE:
-            with open(out_file, "ab") as f:
-                np.savetxt(f, batch, delimiter=TDC_SEP)
-            batch = []
-        prev_score = curr_score
-
-    if len(batch) > 0:
-        with open(out_file, "ab") as f:
-            np.savetxt(f, batch, delimiter=TDC_SEP)
-    del batch
-    os.remove(file_path)

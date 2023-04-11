@@ -4,6 +4,7 @@ from the command line.
 """
 import argparse
 import textwrap
+
 from mokapot import __version__
 
 
@@ -17,25 +18,36 @@ class MokapotHelpFormatter(argparse.HelpFormatter):
 
 class Config:
     """
-    The xenith configuration options.
+    The mokapot configuration options.
 
     Options can be specified as command-line arguments.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, parser=None) -> None:
         """Initialize configuration values."""
-        self.parser = _parser()
-        self._namespace = vars(self.parser.parse_args())
+        self._namespace = None
+        if parser is None:
+            self.parser = _parser()
+        else:
+            self.parser = parser
+
+    @property
+    def args(self):
+        """Collect args lazily."""
+        if self._namespace is None:
+            self._namespace = vars(self.parser.parse_args())
+
+        return self._namespace
 
     def __getattr__(self, option):
-        return self._namespace[option]
+        return self.args[option]
 
 
 def _parser():
     """The parser"""
     desc = (
         f"mokapot version {__version__}.\n"
-        "Written by William E. Fondrie (wfondrie@uw.edu) in the \n"
+        "Written by William E. Fondrie (wfondrie@talus.bio) while in the \n"
         "Department of Genome Sciences at the University of Washington.\n\n"
         "Official code website: https://github.com/wfondrie/mokapot\n\n"
         "More documentation and examples: https://mokapot.readthedocs.io"
@@ -48,6 +60,7 @@ def _parser():
     parser.add_argument(
         "psm_files",
         type=str,
+        nargs="+",
         help=(
             "A collection of PSMs in the Percolator tab-delimited or PepXML "
             "format."
@@ -209,6 +222,20 @@ def _parser():
     )
 
     parser.add_argument(
+        "--aggregate",
+        default=False,
+        action="store_true",
+        help=(
+            "If used, PSMs from multiple PIN files will be "
+            "aggregated and analyzed together. Otherwise, "
+            "a joint model will be trained, but confidence "
+            "estimates will be calculated separately for "
+            "each PIN file. This flag only has an effect "
+            "when multiple PIN files are provided."
+        ),
+    )
+
+    parser.add_argument(
         "--subset_max_train",
         type=int,
         default=None,
@@ -255,9 +282,21 @@ def _parser():
     )
 
     parser.add_argument(
-        "--init_weights",
+        "--load_models",
         type=str,
-        help=("Use saved models and skip training."),
+        nargs="+",
+        help=(
+            "Load previously saved models and skip model training."
+            "Note that the number of models must match the value of --folds."
+        ),
+    )
+
+    parser.add_argument(
+        "--plugin",
+        type=str,
+        action="append",
+        default=[],
+        help=("The names of the plugins to use."),
     )
 
     parser.add_argument(

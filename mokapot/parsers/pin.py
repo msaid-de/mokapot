@@ -19,14 +19,13 @@ LOGGER = logging.getLogger(__name__)
 
 # Functions -------------------------------------------------------------------
 def read_pin(
-    pin_file,
+    pin_files,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
     expmass_column=None,
     rt_column=None,
     charge_column=None,
-    copy_data=False,
 ):
     """Read Percolator input (PIN) tab-delimited files.
 
@@ -63,12 +62,12 @@ def read_pin(
     filename_column : str, optional
         The column specifying the MS data file. If :code:`None`, mokapot will
         look for a column called "filename" (case insensitive). This is
-        required for some output formats, such as FastLFQ.
+        required for some output formats, such as FlashLFQ.
     calcmass_column : str, optional
         The column specifying the theoretical monoisotopic mass of the peptide
         including modifications. If :code:`None`, mokapot will look for a
         column called "calcmass" (case insensitive). This is required for some
-        output formats, such as FastLFQ.
+        output formats, such as FlashLFQ.
     expmass_column : str, optional
         The column specifying the measured neutral precursor mass. If
         :code:`None`, mokapot will look for a column call "expmass" (case
@@ -76,12 +75,12 @@ def read_pin(
     rt_column : str, optional
         The column specifying the retention time in seconds. If :code:`None`,
         mokapot will look for a column called "ret_time" (case insensitive).
-        This is required for some output formats, such as FastLFQ.
+        This is required for some output formats, such as FlashLFQ.
     charge_column : str, optional
         The column specifying the charge state of each peptide. If
         :code:`None`, mokapot will look for a column called "charge" (case
         insensitive). This is required for some output formats, such as
-        FastLFQ.
+        FlashLFQ.
     to_df : bool, optional
         Return a :py:class:`pandas.DataFrame` instead of a
         :py:class:`~mokapot.dataset.LinearPsmDataset`.
@@ -98,16 +97,18 @@ def read_pin(
         PSMs from all of the PIN files.
     """
     logging.info("Parsing PSMs...")
-    return read_percolator(
-        pin_file,
-        group_column=group_column,
-        filename_column=filename_column,
-        calcmass_column=calcmass_column,
-        expmass_column=expmass_column,
-        rt_column=rt_column,
-        charge_column=charge_column,
-        copy_data=copy_data,
-    )
+    return [
+        read_percolator(
+            pin_file,
+            group_column=group_column,
+            filename_column=filename_column,
+            calcmass_column=calcmass_column,
+            expmass_column=expmass_column,
+            rt_column=rt_column,
+            charge_column=charge_column,
+        )
+        for pin_file in utils.tuplize(pin_files)
+    ]
 
 
 def read_percolator(
@@ -118,7 +119,6 @@ def read_percolator(
     expmass_column=None,
     rt_column=None,
     charge_column=None,
-    copy_data=False,
 ):
     """
     Read a Percolator tab-delimited file.
@@ -137,8 +137,9 @@ def read_percolator(
     pandas.DataFrame
         A DataFrame of the parsed data.
     """
+
     LOGGER.info("Reading %s...", perc_file)
-    columns = get_column_names_from_file(perc_file, copy_data)
+    columns = get_column_names_from_file(perc_file)
 
     # TODO: Refactor the generation of column variables with simpler implementation
     # Find all of the necessary columns, case-insensitive:
@@ -270,11 +271,15 @@ def open_file(file_name):
         return open(file_name)
 
 
-def read_file(file_name, use_cols=None):
+def read_file(file_name, use_cols=None, target_column=None):
     with open_file(file_name) as f:
-        return pd.read_csv(
+        df = pd.read_csv(
             f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
-        )
+        ).apply(pd.to_numeric, errors="ignore")
+    try:
+        return convert_targets_column(df, target_column)
+    except:
+        return df
 
 
 def read_file_in_chunks(file, chunk_size, use_cols):
@@ -291,12 +296,9 @@ def read_file_in_chunks(file, chunk_size, use_cols):
     )
 
 
-def get_column_names_from_file(file, copy_data):
-    if isinstance(file, pd.DataFrame):
-        return file.copy(deep=copy_data).columns
-    else:
-        with open_file(file) as perc:
-            return perc.readline().rstrip().split("\t")
+def get_column_names_from_file(file):
+    with open_file(file) as perc:
+        return perc.readline().rstrip().split("\t")
 
 
 def get_rows_from_dataframe(idx, chunk, train_psms):
@@ -324,7 +326,7 @@ def get_rows_from_dataframe(idx, chunk, train_psms):
         )
 
 
-def parse_in_chunks(psms_info, idx, chunk_size):
+def parse_in_chunks(psms_info, train_idx, chunk_size):
     """
     Parse a file in chunks
 
@@ -332,7 +334,7 @@ def parse_in_chunks(psms_info, idx, chunk_size):
     ----------
     psms_info : dict object
         contains all psms info.
-    idx : list of list of indexes
+    train_idx : list of list of indexes
         The indexes to select from data.
     chunk_size : int
         The chunk size in bytes.
@@ -342,25 +344,24 @@ def parse_in_chunks(psms_info, idx, chunk_size):
     List
         list of dataframes
     """
-    train_psms = [[] for _ in range(len(idx))]
-    reader = read_file_in_chunks(
-        file=psms_info["file"],
-        chunk_size=chunk_size,
-        use_cols=psms_info["columns"],
-    )
-    Parallel(n_jobs=-1, require="sharedmem")(
-        delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
-        for chunk in reader
-    )
-
+    train_psms = [[] for _ in range(len(train_idx))]
+    for file_name, idx in zip(psms_info["file"], zip(*train_idx)):
+        reader = read_file_in_chunks(
+            file=file_name,
+            chunk_size=chunk_size,
+            use_cols=psms_info["columns"],
+        )
+        Parallel(n_jobs=-1, require="sharedmem")(
+            delayed(get_rows_from_dataframe)(idx, chunk, train_psms)
+            for chunk in reader
+        )
     return Parallel(n_jobs=-1, require="sharedmem")(
-        delayed(concat_chunks)(df=df, orig_idx=orig_idx)
-        for df, orig_idx in zip(train_psms, idx)
+        delayed(concat_chunks)(df=df) for df in train_psms
     )
 
 
-def concat_chunks(df, orig_idx):
-    return pd.concat(df).reindex(orig_idx)
+def concat_chunks(df):
+    return pd.concat(df)
 
 
 def convert_targets_column(data, target_column):
@@ -385,21 +386,38 @@ def _check_column(col, columns, default):
 
 
 def read_data_for_rescale(psms_info, subset_max_rescale):
-    data_size = sum(1 for line in open(psms_info["file"])) - 1
-    skip_rows = None
-    if subset_max_rescale and subset_max_rescale < data_size:
-        skip_rows = sorted(
-            np.random.choice(
-                a=range(1, data_size + 1),
-                size=data_size - subset_max_rescale,
-                replace=False,
-            )
+    data_sizes = [sum(1 for line in open(p["file"])) - 1 for p in psms_info]
+    skip_rows_per_file = [None for _ in psms_info]
+    if subset_max_rescale and subset_max_rescale < sum(data_sizes):
+        subset_max_rescale_per_file = [
+            subset_max_rescale // len(data_sizes)
+            for _ in range(len(data_sizes))
+        ]
+        subset_max_rescale_per_file[-1] += subset_max_rescale - sum(
+            subset_max_rescale_per_file
         )
-    return pd.read_csv(
-        psms_info["file"],
-        usecols=psms_info["feature_columns"],
-        skiprows=skip_rows,
-        sep="\t",
-        index_col=False,
-        on_bad_lines="skip",
-    )
+        skip_rows_per_file = [
+            sorted(
+                np.random.choice(
+                    a=range(1, data_size + 1),
+                    size=data_size - subset_max,
+                    replace=False,
+                )
+            )
+            for data_size, subset_max in zip(
+                data_sizes, subset_max_rescale_per_file
+            )
+        ]
+    return pd.concat(
+        [
+            pd.read_csv(
+                p["file"],
+                usecols=p["feature_columns"],
+                skiprows=skip_rows,
+                sep="\t",
+                index_col=False,
+                on_bad_lines="skip",
+            )
+            for p, skip_rows in zip(psms_info, skip_rows_per_file)
+        ]
+    ).reset_index(drop=True)
