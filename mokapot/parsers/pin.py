@@ -139,8 +139,7 @@ def read_percolator(
     """
 
     LOGGER.info("Reading %s...", perc_file)
-    with open_file(perc_file) as perc:
-        columns = perc.readline().rstrip().split("\t")
+    columns = get_column_names_from_file(perc_file)
 
     # TODO: Refactor the generation of column variables with simpler implementation
     # Find all of the necessary columns, case-insensitive:
