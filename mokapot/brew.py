@@ -5,7 +5,6 @@ import logging
 import copy
 from operator import itemgetter
 
-import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
 
@@ -15,11 +14,10 @@ from .dataset import (
     LinearPsmDataset,
     calibrate_scores,
     update_labels,
-    find_best_feature,
+    read_file,
 )
 from .parsers.pin import (
     parse_in_chunks,
-    convert_targets_column,
     read_file_in_chunks,
 )
 from .constants import (
@@ -32,7 +30,7 @@ LOGGER = logging.getLogger(__name__)
 
 # Functions -------------------------------------------------------------------
 def brew(
-    psms_info,
+    psms,
     model=None,
     test_fdr=0.01,
     folds=3,
@@ -61,7 +59,7 @@ def brew(
 
     Parameters
     ----------
-    psms_info : Dict
+    psms : Dict
         Contains all required info about the input data
     model: Model object or list of Model objects, optional
         The :py:class:`mokapot.Model` object to be fit. The default is
@@ -104,9 +102,9 @@ def brew(
         model = PercolatorModel()
 
     try:
-        iter(psms_info)
+        iter(psms)
     except TypeError:
-        psms_info = [psms_info]
+        psms = [psms]
 
     try:
         model.estimator
@@ -115,37 +113,32 @@ def brew(
         pass
 
         # Check that all of the datasets have the same features:
-    feat_set = set(psms_info[0]["feature_columns"])
-    if not all([set(p["feature_columns"]) == feat_set for p in psms_info]):
+    feat_set = set(psms[0].feature_columns)
+    if not all([set(_psms.feature_columns) == feat_set for _psms in psms]):
         raise ValueError("All collections of PSMs must use the same features.")
-    psms_info[0]["file"] = [p["file"] for p in psms_info]
-    psms_info[0]["spectra_dataframe"] = [
-        p["spectra_dataframe"] for p in psms_info
-    ]
-    psms_info = psms_info[0]
-    target_column = psms_info["target_column"]
-    spectrum_columns = psms_info["spectrum_columns"]
-    df_spectra = [
-        df.apply(pd.to_numeric, errors="ignore")
-        for df in psms_info.pop("spectra_dataframe")
-    ]
-    df_spectra = [
-        convert_targets_column(df, target_column) for df in df_spectra
-    ]
-    data_size = [len(df) for df in df_spectra]
+
+    data_size = [len(_psms.spectra_dataframe) for _psms in psms]
     if sum(data_size) > 1:
         LOGGER.info("Found %i total PSMs.", sum(data_size))
-        num_targets = sum([(df[target_column]).sum() for df in df_spectra])
-        num_decoys = sum([(~df[target_column]).sum() for df in df_spectra])
+        num_targets = sum(
+            [
+                (_psms.spectra_dataframe[_psms.target_column]).sum()
+                for _psms in psms
+            ]
+        )
+        num_decoys = sum(
+            [
+                (~_psms.spectra_dataframe[_psms.target_column]).sum()
+                for _psms in psms
+            ]
+        )
         LOGGER.info(
             "  - %i target PSMs and %i decoy PSMs detected.",
             num_targets,
             num_decoys,
         )
-    df_spectra = [df[spectrum_columns] for df in df_spectra]
     LOGGER.info("Splitting PSMs into %i folds...", folds)
-    test_folds_idx = [_split(df, folds) for df in df_spectra]
-    del df_spectra
+    test_folds_idx = [_psms._split(folds, rng) for _psms in psms]
 
     # If trained models are provided, use the them as-is.
     try:
@@ -174,13 +167,13 @@ def brew(
             )
         )
         train_psms = parse_in_chunks(
-            psms_info=psms_info,
+            psms=psms,
             train_idx=train_sets,
             chunk_size=CHUNK_SIZE_READ_ALL_DATA,
         )
         del train_sets
         fitted = Parallel(n_jobs=max_workers, require="sharedmem")(
-            delayed(_fit_model)(d, psms_info, copy.deepcopy(model), f)
+            delayed(_fit_model)(d, psms, copy.deepcopy(model), f)
             for f, d in enumerate(train_psms)
         )
 
@@ -194,13 +187,19 @@ def brew(
     # If we reset, just use the original model on all the folds:
     if reset:
         scores = [
-            p._calibrate_scores(model.predict(p), test_fdr) for p in psms_info
+            _psms.calibrate_scores(
+                _predict_with_ensemble(psms=_psms, models=[model]), test_fdr
+            )
+            for _psms in psms
         ]
 
     # If we don't reset, assign scores to each fold:
     elif all([m.is_trained for m in models]):
         if ensemble:
-            scores = _predict_with_ensemble(psms_info=psms_info, models=models)
+            scores = [
+                _predict_with_ensemble(psms=_psms, models=models)
+                for _psms in psms
+            ]
         else:
             # generate model index for each psm in all folds
             model_to_psm_idx = [
@@ -221,14 +220,14 @@ def brew(
             scores = list(
                 _predict(
                     models_idx=model_to_psm_idx,
-                    psms_info=psms_info,
+                    psms=psms,
                     models=models,
                     test_fdr=test_fdr,
                 )
             )
     # If model training has failed
     else:
-        scores = [np.zeros(data_size) for _ in psms_info["file"]]
+        scores = [np.zeros(data_size) for _ in psms]
     # Find which is best: the learned model, the best feature, or
     # a pretrained model.
     if not all([m.override for m in models]):
@@ -240,8 +239,8 @@ def brew(
         feat_total = 0
 
     preds = [
-        update_labels(file_name, s, psms_info["target_column"], test_fdr)
-        for file_name, s in zip(psms_info["file"], scores)
+        update_labels(_psms.filename, s, _psms.target_column, test_fdr)
+        for _psms, s in zip(psms, scores)
     ]
 
     pred_total = sum([(pred == 1).sum() for pred in preds])
@@ -250,21 +249,18 @@ def brew(
     if feat_total > pred_total:
         using_best_feat = True
         feat, _, desc = best_feats[best_feat_idx]
-        descs = [desc] * len(psms_info["file"])
+        descs = [desc] * len(psms)
         scores = [
-            pd.read_csv(
-                file_name,
-                sep="\t",
-                usecols=[feat],
-                index_col=False,
-                on_bad_lines="skip",
+            read_file(
+                _psms.file_name,
+                use_cols=[feat],
             ).values
-            for file_name in psms_info["file"]
+            for _psms in psms
         ]
 
     else:
         using_best_feat = False
-        descs = [True] * len(psms_info["file"])
+        descs = [True] * len(psms)
 
     if using_best_feat:
         logging.warning(
@@ -279,47 +275,10 @@ def brew(
             "using the original model."
         )
 
-    return psms_info, models, scores, descs
+    return psms, models, scores, descs
 
 
 # Utility Functions -----------------------------------------------------------
-def _split(data, folds):
-    """
-    Get the indices for random, even splits of the dataset.
-
-    Each tuple of integers contains the indices for a random subset of
-    PSMs. PSMs are grouped by spectrum, such that all PSMs from the same
-    spectrum only appear in one split. The typical use for this method
-    is to split the PSMs into cross-validation folds.
-
-    Parameters
-    ----------
-    folds: int
-        The number of splits to generate.
-
-    Returns
-    -------
-    A tuple of tuples of ints
-        Each of the returned tuples contains the indices  of PSMs in a
-        split.
-    """
-    scans = list(data.groupby(list(data.columns), sort=False).indices.values())
-    for indices in scans:
-        np.random.shuffle(indices)
-    np.random.shuffle(scans)
-    scans = list(scans)
-
-    # Split the data evenly
-    num = len(scans) // folds
-    splits = [scans[i : i + num] for i in range(0, len(scans), num)]
-
-    if len(splits[-1]) < num:
-        splits[-2] += splits[-1]
-        splits = splits[:-1]
-
-    return tuple(utils.flatten(s) for s in splits)
-
-
 def make_train_sets(test_idx, subset_max_train, data_size, rng):
     """
     Parameters
@@ -358,7 +317,9 @@ def make_train_sets(test_idx, subset_max_train, data_size, rng):
                 k += chunk_range
             train_idx[file_idx] += list(set(range(k, ds)) - set(idx))
             train_idx_size += len(train_idx[file_idx])
-        if len(subset_max_train_per_file) > 0:
+        if len(subset_max_train_per_file) > 0 and train_idx_size > sum(
+            subset_max_train_per_file
+        ):
             LOGGER.info(
                 "Subsetting PSMs (%i) to (%i).",
                 train_idx_size,
@@ -374,22 +335,22 @@ def make_train_sets(test_idx, subset_max_train, data_size, rng):
         yield train_idx
 
 
-def _create_psms(psms_info, data, enforce_checks=True):
-    convert_targets_column(data=data, target_column=psms_info["target_column"])
+def _create_psms(psms, data, enforce_checks=True):
+    utils.convert_targets_column(data=data, target_column=psms.target_column)
     return LinearPsmDataset(
         psms=data,
-        target_column=psms_info["target_column"],
-        spectrum_columns=psms_info["spectrum_columns"],
-        peptide_column=psms_info["peptide_column"],
-        protein_column=psms_info["protein_column"],
-        group_column=psms_info["group_column"],
-        feature_columns=psms_info["feature_columns"],
-        filename_column=psms_info["filename_column"],
-        scan_column=psms_info["scan_column"],
-        calcmass_column=psms_info["calcmass_column"],
-        expmass_column=psms_info["expmass_column"],
-        rt_column=psms_info["rt_column"],
-        charge_column=psms_info["charge_column"],
+        target_column=psms.target_column,
+        spectrum_columns=psms.spectrum_columns,
+        peptide_column=psms.peptide_column,
+        protein_column=psms.protein_column,
+        group_column=psms.group_column,
+        feature_columns=psms.feature_columns,
+        filename_column=psms.filename_column,
+        scan_column=psms.scan_column,
+        calcmass_column=psms.calcmass_column,
+        expmass_column=psms.expmass_column,
+        rt_column=psms.rt_column,
+        charge_column=psms.charge_column,
         copy_data=False,
         enforce_checks=enforce_checks,
     )
@@ -405,13 +366,13 @@ def predict_fold(model, fold, psms, scores):
     scores[fold].append(model.predict(psms))
 
 
-def _predict(models_idx, psms_info, models, test_fdr):
+def _predict(models_idx, psms, models, test_fdr):
     """
     Return the new scores for the dataset
 
     Parameters
     ----------
-    psms_info : Dict
+    psms : Dict
         Contains all required info about the dataset to rescore
     models_idx : list of numpy.ndarray
         The indicies of the models to predict with
@@ -425,7 +386,7 @@ def _predict(models_idx, psms_info, models, test_fdr):
     numpy.ndarray
         A :py:class:`numpy.ndarray` containing the new scores.
     """
-    for file_name, mod_idx in zip(psms_info["file"], models_idx):
+    for _psms, mod_idx in zip(psms, models_idx):
         scores = []
 
         model_test_idx = utils.create_chunks(
@@ -436,9 +397,9 @@ def _predict(models_idx, psms_info, models, test_fdr):
         targets = [[] for _ in range(n_folds)]
         orig_idx = [[] for _ in range(n_folds)]
         reader = read_file_in_chunks(
-            file=file_name,
+            file=_psms.filename,
             chunk_size=CHUNK_SIZE_ROWS_PREDICTION,
-            use_cols=psms_info["columns"],
+            use_cols=_psms.columns,
         )
         for i, psms_slice in enumerate(reader):
             psms_slice["fold"] = model_test_idx.pop(0)
@@ -447,7 +408,7 @@ def _predict(models_idx, psms_info, models, test_fdr):
                 for i in range(n_folds)
             ]
             psms_slice = [
-                _create_psms(psms_info, psm_slice, enforce_checks=False)
+                _create_psms(_psms, psm_slice, enforce_checks=False)
                 for psm_slice in psms_slice
             ]
             [
@@ -459,10 +420,10 @@ def _predict(models_idx, psms_info, models, test_fdr):
                 delayed(predict_fold)(
                     model=models[mod_idx],
                     fold=mod_idx,
-                    psms=p,
+                    psms=_psms,
                     scores=fold_scores,
                 )
-                for mod_idx, p in enumerate(psms_slice)
+                for mod_idx, _psms in enumerate(psms_slice)
             )
             del psms_slice
         del reader
@@ -491,13 +452,13 @@ def _predict(models_idx, psms_info, models, test_fdr):
         yield np.concatenate(scores)[orig_idx]
 
 
-def _predict_with_ensemble(psms_info, models):
+def _predict_with_ensemble(psms, models):
     """
     Return the new scores for the dataset using ensemble of all trained models
 
     Parameters
     ----------
-    psms_info : Dict
+    psms : Dict
         Contains all required info about the dataset to rescore
     models : list of Model
         The models for each dataset and whether it
@@ -505,14 +466,14 @@ def _predict_with_ensemble(psms_info, models):
     """
     scores = [[] for _ in range(len(models))]
     reader = read_file_in_chunks(
-        file=psms_info["file"],
+        file=psms.filename,
         chunk_size=CHUNK_SIZE_ROWS_PREDICTION,
-        use_cols=psms_info["columns"],
+        use_cols=psms.columns,
     )
-    for psms in reader:
-        psms = _create_psms(psms_info, psms, enforce_checks=False)
+    for data in reader:
+        data = _create_psms(psms, data, enforce_checks=False)
         fold_scores = Parallel(n_jobs=-1, require="sharedmem")(
-            delayed(mod.predict)(psms=psms) for mod in models
+            delayed(mod.predict)(psms=data) for mod in models
         )
         [score.append(fs) for score, fs in zip(scores, fold_scores)]
     del fold_scores
@@ -520,7 +481,7 @@ def _predict_with_ensemble(psms_info, models):
     return np.mean(scores, axis=0)
 
 
-def _fit_model(train_set, psms_info, model, fold):
+def _fit_model(train_set, psms, model, fold):
     """
     Fit the estimator using the training data.
 
@@ -544,7 +505,7 @@ def _fit_model(train_set, psms_info, model, fold):
     LOGGER.debug("")
     LOGGER.debug("=== Analyzing Fold %i ===", fold + 1)
     reset = False
-    train_set = _create_psms(psms_info, train_set)
+    train_set = _create_psms(psms[0], train_set)
     try:
         model.fit(train_set)
     except RuntimeError as msg:

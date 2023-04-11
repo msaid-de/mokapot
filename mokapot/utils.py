@@ -2,9 +2,17 @@
 Utility functions
 """
 import itertools
+import gzip
 
 import numpy as np
 import pandas as pd
+
+
+def open_file(file_name):
+    if str(file_name).endswith(".gz"):
+        return gzip.open(file_name)
+    else:
+        return open(file_name)
 
 
 def groupby_max(df, by_cols, max_col, rng):
@@ -119,3 +127,10 @@ def merge_sort(paths, col_score, sep="\t"):
         row = get_next_row(file_handles, current_rows, col_index)
         if row is not None:
             yield row
+
+
+def convert_targets_column(data, target_column):
+    data[target_column] = data[target_column].astype(int)
+    if any(data[target_column] == -1):
+        data[target_column] = ((data[target_column] + 1) / 2).astype(bool)
+    return data
