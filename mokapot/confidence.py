@@ -969,7 +969,7 @@ def plot_qvalues(qvalues, threshold=0.1, ax=None, **kwargs):
 
     ax.set_xlim(0 - xmargin, threshold + xmargin)
     ax.set_xlabel("q-value")
-    ax.set_ylabel(f"Discoveries")
+    ax.set_ylabel("Discoveries")
 
     ax.step(qvals["qvalue"].values, qvals.num.values, where="post", **kwargs)
 
