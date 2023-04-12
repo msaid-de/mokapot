@@ -130,7 +130,7 @@ def main():
             model = list(plugin_models.values())[0]
 
     if model is None:
-        logging.debug(f"Loading Percolator model.")
+        logging.debug("Loading Percolator model.")
         model = PercolatorModel(
             train_fdr=config.train_fdr,
             max_iter=config.max_iter,
