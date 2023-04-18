@@ -851,9 +851,9 @@ def update_labels(file_name, scores, target_column, eval_fdr=0.01, desc=True):
 
 def read_file(file_name, use_cols=None, target_column=None):
     with utils.open_file(file_name) as f:
-        df = pd.read_csv(
-            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
-        ).apply(pd.to_numeric, errors="ignore")
+        df = pd.read_csv(f, sep="\t", usecols=use_cols, index_col=False).apply(
+            pd.to_numeric, errors="ignore"
+        )
     try:
         return utils.convert_targets_column(df, target_column)
     except:
