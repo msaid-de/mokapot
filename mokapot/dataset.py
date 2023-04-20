@@ -744,6 +744,7 @@ class OnDiskPsmDataset:
             Each of the returned tuples contains the indices  of PSMs in a
             split.
         """
+
         self.spectra_dataframe = self.spectra_dataframe[self.spectrum_columns]
         scans = list(
             self.spectra_dataframe.groupby(
@@ -851,10 +852,10 @@ def update_labels(file_name, scores, target_column, eval_fdr=0.01, desc=True):
 
 def read_file(file_name, use_cols=None, target_column=None):
     with utils.open_file(file_name) as f:
-        df = pd.read_csv(f, sep="\t", usecols=use_cols, index_col=False).apply(
-            pd.to_numeric, errors="ignore"
-        )
-    try:
+        df = pd.read_csv(
+            f, sep="\t", usecols=use_cols, index_col=False, on_bad_lines="skip"
+        ).apply(pd.to_numeric, errors="ignore")
+    if target_column:
         return utils.convert_targets_column(df, target_column)
-    except:
+    else:
         return df

@@ -13,10 +13,8 @@ typical use cases. For example, use :py:class:`PercolatorModel` if you
 want to emulate the behavior of Percolator.
 
 """
-import copy
 import logging
 import pickle
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -281,6 +279,7 @@ class Model:
             self.desc,
         ) = _get_starting_labels(psms, self)
 
+
         # Normalize Features
         self.features = psms.features.columns.tolist()
         norm_feat = self.scaler.fit_transform(psms.features.values)
@@ -336,6 +335,9 @@ class Model:
                 LOGGER.debug("    %s", line)
 
         self.is_trained = True
+        self.feat_pass = feat_pass
+        self.best_feat = best_feat
+        self.desc = desc
         LOGGER.info("Done training.")
         return self
 
