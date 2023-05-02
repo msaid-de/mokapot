@@ -167,6 +167,7 @@ def main():
         proteins=proteins,
         prefixes=prefixes,
         rng=config.seed,
+        peps_error=config.peps_error,
     )
 
     if config.save_models:

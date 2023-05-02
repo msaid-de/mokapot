@@ -89,6 +89,7 @@ class GroupedConfidence:
         combine=False,
         prefixes=None,
         rng=0,
+        peps_error=False,
     ):
         """Initialize a GroupedConfidence object"""
         data = read_file(psms.filename, use_cols=list(psms.columns))
@@ -130,6 +131,7 @@ class GroupedConfidence:
                 prefixes=prefixes,
                 append_to_output_file=append_to_group,
                 rng=rng,
+                peps_error=peps_error,
             )
             if combine:
                 append_to_group = True
@@ -432,6 +434,7 @@ class LinearConfidence(Confidence):
         decoys=None,
         deduplication=True,
         proteins=None,
+        peps_error=False,
         sep="\t",
         rng=0,
     ):
@@ -450,6 +453,7 @@ class LinearConfidence(Confidence):
             desc=desc,
             decoys=decoys,
             sep=sep,
+            peps_error=peps_error,
         )
 
         self.accepted = {}
@@ -488,6 +492,7 @@ class LinearConfidence(Confidence):
         out_paths,
         desc=True,
         decoys=False,
+        peps_error=False,
         sep="\t",
     ):
         """
@@ -582,6 +587,8 @@ class LinearConfidence(Confidence):
                     self.peps = 0
                 else:
                     raise
+            if peps_error and all(self.peps == 1):
+                raise ValueError("PEP values are all equal to 1.")
 
             logging.info(f"Writing {level} results...")
 
@@ -649,6 +656,7 @@ class CrossLinkedConfidence(Confidence):
         out_paths,
         desc=True,
         decoys=None,
+        peps_error=False,
         sep="\t",
     ):
         """Initialize a CrossLinkedConfidence object"""
@@ -662,6 +670,7 @@ class CrossLinkedConfidence(Confidence):
             desc=desc,
             decoys=decoys,
             sep=sep,
+            peps_error=peps_error,
         )
 
     def _assign_confidence(
@@ -670,6 +679,7 @@ class CrossLinkedConfidence(Confidence):
         out_paths,
         desc=True,
         decoys=False,
+        peps_error=False,
         sep="\t",
     ):
         """
@@ -705,6 +715,8 @@ class CrossLinkedConfidence(Confidence):
             _, self.peps = qvality.getQvaluesFromScores(
                 self.scores[self.targets == 2], self.scores[~self.targets]
             )
+            if peps_error and all(self.peps == 1):
+                raise ValueError("PEP values are all equal to 1.")
             logging.info(f"Writing {level} results...")
             self.to_txt(data_path, data_columns, level.lower(), decoys, sep)
 
@@ -725,6 +737,7 @@ def assign_confidence(
     combine=False,
     append_to_output_file=False,
     rng=0,
+    peps_error=False,
 ):
     """Assign confidence to PSMs peptides, and optionally, proteins.
 
@@ -927,6 +940,7 @@ def assign_confidence(
                 deduplication=deduplication,
                 proteins=proteins,
                 rng=rng,
+                peps_error=peps_error,
             )
             if prefix is None:
                 append_to_output_file = True
@@ -944,6 +958,7 @@ def assign_confidence(
                 combine=combine,
                 prefixes=[prefix],
                 rng=rng,
+                peps_error=peps_error,
             )
 
 
