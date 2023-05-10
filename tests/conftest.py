@@ -109,13 +109,13 @@ def psm_df_1000(tmp_path):
         fasta_ref.write(fasta_data)
     df = pd.concat([pd.DataFrame(targets), pd.DataFrame(decoys)])
     df.to_csv(pin, sep="\t", index=False)
-    return pin, fasta
+    return pin, df, fasta
 
 
 @pytest.fixture
 def psms(psm_df_1000):
     """A small LinearPsmDataset"""
-    df, _ = psm_df_1000
+    _, df, _ = psm_df_1000
     psms = LinearPsmDataset(
         psms=df,
         target_column="target",

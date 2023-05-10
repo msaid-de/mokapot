@@ -9,7 +9,7 @@ from mokapot import OnDiskPsmDataset, assign_confidence
 def test_one_group(psm_df_1000, tmp_path):
     """Test that one group is equivalent to no group."""
 
-    pin_file, _ = psm_df_1000
+    pin_file, _, _ = psm_df_1000
     columns = list(pd.read_csv(pin_file, sep="\t").columns)
     df_spectra = pd.read_csv(
         pin_file, sep="\t", usecols=["scannr", "expmass", "target"]
