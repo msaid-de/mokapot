@@ -240,3 +240,7 @@ if __name__ == "__main__":
     except ValueError as e:
         logging.error(f"[Error] {e}")
         sys.exit(250)  # input failure
+    except Exception as e:
+        logging.error(f"[Error] {e}")
+        sys.exit(252)
+
