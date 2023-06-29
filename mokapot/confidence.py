@@ -108,7 +108,7 @@ class GroupedConfidence:
             .index
         )
         append_to_group = False
-        group_file = "group_psms.csv"
+        group_file = f"{dest_dir}{prefixes}group_psms.csv"
         for group, group_df in data.groupby(self.group_column):
             LOGGER.info("Group: %s == %s", self.group_column, group)
             tdc_winners = group_df.index.intersection(idx)
@@ -787,6 +787,7 @@ def assign_confidence(
         A :py:class:`~mokapot.confidence.LinearConfidence` object storing
         the confidence estimates for the collection of PSMs.
     """
+
     if scores is None:
         scores = []
         for _psms in psms:
@@ -798,8 +799,8 @@ def assign_confidence(
                 ].values
             )
 
-    psms_path = "psms.csv"
-    peptides_path = "peptides.csv"
+    psms_path = f"{dest_dir}psms.csv"
+    peptides_path = f"{dest_dir}peptides.csv"
     levels = ["psms"]
     level_data_path = [psms_path]
     if deduplication:
@@ -838,18 +839,19 @@ def assign_confidence(
             "score",
         ]
         if _psms.group_column is None:
+            if str(dest_dir)[-1] == ".":
+                dest_dir_prefix = dest_dir
+            else:
+                dest_dir_prefix = f"{dest_dir}/"
+            if prefix is not None:
+                dest_dir_prefix = dest_dir_prefix + f"{prefix}."
+            dest_dir_prefix_group = dest_dir_prefix
             out_files = []
             for level in levels:
-                if str(dest_dir)[-1] == ".":
-                    dest_dir_prefix = dest_dir
-                else:
-                    dest_dir_prefix = f"{dest_dir}/"
-                if prefix is not None:
-                    dest_dir_prefix = dest_dir_prefix + f"{prefix}."
                 if group_column is not None and not combine:
-                    dest_dir_prefix = f"{dest_dir_prefix}{group_column}."
-                outfile_t = str(dest_dir_prefix) + f"targets.{level}"
-                outfile_d = str(dest_dir_prefix) + f"decoys.{level}"
+                    dest_dir_prefix_group = f"{dest_dir_prefix}{group_column}."
+                outfile_t = str(dest_dir_prefix_group) + f"targets.{level}"
+                outfile_d = str(dest_dir_prefix_group) + f"decoys.{level}"
                 if not append_to_output_file:
                     with open(outfile_t, "w") as fp:
                         fp.write(f"{sep.join(output_columns[level])}\n")
@@ -877,13 +879,14 @@ def assign_confidence(
                     deduplication,
                     i,
                     sep,
+                    dest_dir_prefix
                 )
                 for chunk_metadata, score_chunk, i in zip(
                     reader, scores_slices, range(len(scores_slices))
                 )
             )
 
-            scores_metadata_paths = glob.glob("scores_metadata_*")
+            scores_metadata_paths = glob.glob(f"{dest_dir_prefix}scores_metadata_*")
             iterable_sorted = merge_sort(
                 scores_metadata_paths, col_score="score", sep=sep
             )
@@ -906,8 +909,8 @@ def assign_confidence(
                     unique_peptides,
                 ) = get_unique_psms_and_peptides(
                     iterable=iterable_sorted,
-                    out_psms="psms.csv",
-                    out_peptides="peptides.csv",
+                    out_psms=f"{dest_dir}psms.csv",
+                    out_peptides=f"{dest_dir}peptides.csv",
                     sep=sep,
                 )
                 LOGGER.info(
@@ -963,7 +966,7 @@ def assign_confidence(
 
 
 def save_sorted_metadata_chunks(
-    chunk_metadata, score_chunk, psms, deduplication, i, sep
+    chunk_metadata, score_chunk, psms, deduplication, i, sep, dest_dir_prefix
 ):
     chunk_metadata = convert_targets_column(
         data=chunk_metadata.apply(pd.to_numeric, errors="ignore"),
@@ -974,7 +977,7 @@ def save_sorted_metadata_chunks(
     if deduplication:
         chunk_metadata = chunk_metadata.drop_duplicates(psms.spectrum_columns)
     chunk_metadata.to_csv(
-        f"scores_metadata_{i}.csv",
+        f"{dest_dir_prefix}scores_metadata_{i}.csv",
         sep=sep,
         index=False,
         mode="w",
