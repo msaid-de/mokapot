@@ -845,11 +845,12 @@ def assign_confidence(
                 dest_dir_prefix = f"{dest_dir}/"
             if prefix is not None:
                 dest_dir_prefix = dest_dir_prefix + f"{prefix}."
-            dest_dir_prefix_group = dest_dir_prefix
             out_files = []
             for level in levels:
                 if group_column is not None and not combine:
                     dest_dir_prefix_group = f"{dest_dir_prefix}{group_column}."
+                else:
+                    dest_dir_prefix_group = dest_dir_prefix
                 outfile_t = str(dest_dir_prefix_group) + f"targets.{level}"
                 outfile_d = str(dest_dir_prefix_group) + f"decoys.{level}"
                 if not append_to_output_file:
