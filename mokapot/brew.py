@@ -170,6 +170,7 @@ def brew(
             psms=psms,
             train_idx=train_sets,
             chunk_size=CHUNK_SIZE_READ_ALL_DATA,
+            max_workers=max_workers
         )
         del train_sets
         fitted = Parallel(n_jobs=max_workers, require="sharedmem")(

@@ -322,7 +322,7 @@ def get_rows_from_dataframe(idx, chunk, train_psms, psms):
         )
 
 
-def parse_in_chunks(psms, train_idx, chunk_size):
+def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
     """
     Parse a file in chunks
 
@@ -334,6 +334,8 @@ def parse_in_chunks(psms, train_idx, chunk_size):
         The indexes to select from data.
     chunk_size : int
         The chunk size in bytes.
+    max_workers: int
+            Number of workers for Parallel
 
     Returns
     -------
@@ -348,11 +350,11 @@ def parse_in_chunks(psms, train_idx, chunk_size):
             chunk_size=chunk_size,
             use_cols=_psms.columns,
         )
-        Parallel(n_jobs=-1, require="sharedmem")(
+        Parallel(n_jobs=max_workers, require="sharedmem")(
             delayed(get_rows_from_dataframe)(idx, chunk, train_psms, _psms)
             for chunk in reader
         )
-    return Parallel(n_jobs=-1, require="sharedmem")(
+    return Parallel(n_jobs=max_workers, require="sharedmem")(
         delayed(pd.concat)(df) for df in train_psms
     )
 
