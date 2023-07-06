@@ -80,6 +80,7 @@ class GroupedConfidence:
         self,
         psms,
         scores,
+        max_workers,
         desc=True,
         eval_fdr=0.01,
         decoys=False,
@@ -119,6 +120,7 @@ class GroupedConfidence:
             psms.filename = group_file
             assign_confidence(
                 [psms],
+                max_workers,
                 [group_scores],
                 descs=[desc],
                 eval_fdr=eval_fdr,
@@ -724,6 +726,7 @@ class CrossLinkedConfidence(Confidence):
 # Functions -------------------------------------------------------------------
 def assign_confidence(
     psms,
+    max_workers,
     scores=None,
     descs=None,
     eval_fdr=0.01,
@@ -743,6 +746,7 @@ def assign_confidence(
 
     Parameters
     ----------
+    max_workers
     psms : OnDiskPsmDataset
         A collection of PSMs.
     rng : int or np.random.Generator, optional
@@ -872,7 +876,7 @@ def assign_confidence(
                 score, chunk_size=CONFIDENCE_CHUNK_SIZE
             )
 
-            Parallel(n_jobs=-1, require="sharedmem")(
+            Parallel(n_jobs=max_workers, require="sharedmem")(
                 delayed(save_sorted_metadata_chunks)(
                     chunk_metadata,
                     score_chunk,
@@ -953,6 +957,7 @@ def assign_confidence(
             GroupedConfidence(
                 _psms,
                 score,
+                max_workers,
                 eval_fdr=eval_fdr,
                 desc=desc,
                 dest_dir=dest_dir,

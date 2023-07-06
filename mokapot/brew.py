@@ -189,7 +189,7 @@ def brew(
     if reset:
         scores = [
             _psms.calibrate_scores(
-                _predict_with_ensemble(psms=_psms, models=[model]), test_fdr
+                _predict_with_ensemble(psms=_psms, models=[model], max_workers=max_workers), test_fdr
             )
             for _psms in psms
         ]
@@ -198,7 +198,7 @@ def brew(
     elif all([m.is_trained for m in models]):
         if ensemble:
             scores = [
-                _predict_with_ensemble(psms=_psms, models=models)
+                _predict_with_ensemble(psms=_psms, models=models, max_workers=max_workers)
                 for _psms in psms
             ]
         else:
@@ -220,12 +220,8 @@ def brew(
             ]
             del original_order_idx
             scores = list(
-                _predict(
-                    models_idx=model_to_psm_idx,
-                    psms=psms,
-                    models=models,
-                    test_fdr=test_fdr,
-                )
+                _predict(models_idx=model_to_psm_idx, psms=psms, models=models,
+                         test_fdr=test_fdr, max_workers=max_workers)
             )
     # If model training has failed
     else:
@@ -368,7 +364,7 @@ def predict_fold(model, fold, psms, scores):
     scores[fold].append(model.predict(psms))
 
 
-def _predict(models_idx, psms, models, test_fdr):
+def _predict(models_idx, psms, models, test_fdr, max_workers):
     """
     Return the new scores for the dataset
 
@@ -382,6 +378,7 @@ def _predict(models_idx, psms, models, test_fdr):
         The models for each dataset and whether it
         was reset or not.
     test_fdr : the fdr to calibrate at.
+    max_workers : maximum threads for parallelism
 
     Returns
     -------
@@ -418,7 +415,7 @@ def _predict(models_idx, psms, models, test_fdr):
                 for i, psm_slice in enumerate(psms_slice)
             ]
 
-            Parallel(n_jobs=-1, require="sharedmem")(
+            Parallel(n_jobs=max_workers, require="sharedmem")(
                 delayed(predict_fold)(
                     model=models[mod_idx],
                     fold=mod_idx,
@@ -454,12 +451,13 @@ def _predict(models_idx, psms, models, test_fdr):
         yield np.concatenate(scores)[orig_idx]
 
 
-def _predict_with_ensemble(psms, models):
+def _predict_with_ensemble(psms, models, max_workers):
     """
     Return the new scores for the dataset using ensemble of all trained models
 
     Parameters
     ----------
+    max_workers
     psms : Dict
         Contains all required info about the dataset to rescore
     models : list of Model
@@ -474,7 +472,7 @@ def _predict_with_ensemble(psms, models):
     )
     for data in reader:
         data = _create_psms(psms, data, enforce_checks=False)
-        fold_scores = Parallel(n_jobs=-1, require="sharedmem")(
+        fold_scores = Parallel(n_jobs=max_workers, require="sharedmem")(
             delayed(mod.predict)(psms=data) for mod in models
         )
         [score.append(fs) for score, fs in zip(scores, fold_scores)]

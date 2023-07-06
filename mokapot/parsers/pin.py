@@ -26,6 +26,7 @@ LOGGER = logging.getLogger(__name__)
 # Functions -------------------------------------------------------------------
 def read_pin(
     pin_files,
+    max_workers,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -106,6 +107,7 @@ def read_pin(
     return [
         read_percolator(
             pin_file,
+            max_workers=max_workers,
             group_column=group_column,
             filename_column=filename_column,
             calcmass_column=calcmass_column,
@@ -119,6 +121,7 @@ def read_pin(
 
 def read_percolator(
     perc_file,
+    max_workers,
     group_column=None,
     filename_column=None,
     calcmass_column=None,
@@ -199,7 +202,7 @@ def read_percolator(
         chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
     )
     df_spectra = []
-    features_to_drop = Parallel(n_jobs=-1, require="sharedmem")(
+    features_to_drop = Parallel(n_jobs=max_workers, require="sharedmem")(
         delayed(drop_missing_values_and_fill_spectra_dataframe)(
             file=perc_file,
             column=c,
