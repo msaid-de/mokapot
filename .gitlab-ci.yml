@@ -6,6 +6,7 @@ variables:
 
 stages:
   - publish
+  - test
 
 cache:
   key: "${CI_COMMIT_REF_SLUG}"
@@ -40,4 +41,12 @@ publish:
     - poetry config http-basic.gitlab gitlab-ci-token ${CI_JOB_TOKEN}
     - poetry build
     - poetry publish -r gitlab
+
+test:
+  extends: .with_twine
+  stage: test
+  script:
+    - pip install .
+    - cd tests/integration_tests
+    - bash test.sh
 
