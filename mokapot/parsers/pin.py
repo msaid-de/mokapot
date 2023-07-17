@@ -119,6 +119,26 @@ def read_pin(
     ]
 
 
+def create_chunks_with_identifier(data, identifier_column, chunk_size):
+    """
+    This function will split data into chunks but will make sure that identifier_columns is never split
+    Parameters
+    ----------
+    data: the data you want to split in chunks (1d list)
+    identifier_column: columns that should never be splitted. Must be of length 2.
+    chunk_size: the chunk size
+
+    Returns
+    -------
+
+    """
+    if (len(data) + len(identifier_column)) % chunk_size != 1:
+        data_copy = data + identifier_column
+        return create_chunks(data_copy, chunk_size)
+    else:
+        return create_chunks(data, chunk_size) + [identifier_column]
+
+
 def read_percolator(
     perc_file,
     max_workers,
@@ -197,8 +217,9 @@ def read_percolator(
         )
 
     # Check that features don't have missing values:
-    feat_slices = create_chunks(
-        data=features + spectra + labels,
+    feat_slices = create_chunks_with_identifier(
+        data=features,
+        identifier_column=spectra + labels,
         chunk_size=CHUNK_SIZE_COLUMNS_FOR_DROP_COLUMNS,
     )
     df_spectra = []
