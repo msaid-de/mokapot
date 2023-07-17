@@ -325,6 +325,10 @@ def get_rows_from_dataframe(idx, chunk, train_psms, psms):
         )
 
 
+def concat_and_reindex_chunks(df, orig_idx):
+    return pd.concat(df).reindex(orig_idx)
+
+
 def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
     """
     Parse a file in chunks
@@ -333,7 +337,8 @@ def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
     ----------
     psms : OnDiskPsmDataset
         A collection of PSMs.
-    train_idx : list of list of indexes
+    train_idx : list of a list of a list of indexes (first level are training splits,
+        second one is the number of input files, third level the actual idexes
         The indexes to select from data.
     chunk_size : int
         The chunk size in bytes.
@@ -358,7 +363,7 @@ def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
             for chunk in reader
         )
     return Parallel(n_jobs=max_workers, require="sharedmem")(
-        delayed(pd.concat)(df) for df in train_psms
+        delayed(concat_and_reindex_chunks)(df=df, orig_idx=orig_idx) for df, orig_idx in zip(train_psms, (np.hstack(idx) for idx in train_idx))
     )
 
 
