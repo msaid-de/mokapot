@@ -189,7 +189,11 @@ def brew(
     if reset:
         scores = [
             _psms.calibrate_scores(
-                _predict_with_ensemble(psms=_psms, models=[model], max_workers=max_workers), test_fdr
+                _predict_with_ensemble(
+                    psms=_psms,
+                    models=[model],
+                    max_workers=max_workers),
+                test_fdr
             )
             for _psms in psms
         ]
@@ -198,7 +202,10 @@ def brew(
     elif all([m.is_trained for m in models]):
         if ensemble:
             scores = [
-                _predict_with_ensemble(psms=_psms, models=models, max_workers=max_workers)
+                _predict_with_ensemble(
+                    psms=_psms,
+                    models=models,
+                    max_workers=max_workers)
                 for _psms in psms
             ]
         else:
@@ -220,8 +227,13 @@ def brew(
             ]
             del original_order_idx
             scores = list(
-                _predict(models_idx=model_to_psm_idx, psms=psms, models=models,
-                         test_fdr=test_fdr, max_workers=max_workers)
+                _predict(
+                    models_idx=model_to_psm_idx,
+                    psms=psms,
+                    models=models,
+                    test_fdr=test_fdr,
+                    max_workers=max_workers
+                )
             )
     # If model training has failed
     else:

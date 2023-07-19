@@ -121,7 +121,8 @@ def read_pin(
 
 def create_chunks_with_identifier(data, identifier_column, chunk_size):
     """
-    This function will split data into chunks but will make sure that identifier_columns is never split
+    This function will split data into chunks but will make sure that identifier_columns
+    is never split
     Parameters
     ----------
     data: the data you want to split in chunks (1d list)
@@ -384,7 +385,8 @@ def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
             for chunk in reader
         )
     return Parallel(n_jobs=max_workers, require="sharedmem")(
-        delayed(concat_and_reindex_chunks)(df=df, orig_idx=orig_idx) for df, orig_idx in zip(train_psms, (np.hstack(idx) for idx in train_idx))
+        delayed(concat_and_reindex_chunks)(df=df, orig_idx=orig_idx)
+        for df, orig_idx in zip(train_psms, (np.hstack(idx) for idx in train_idx))
     )
 
 
