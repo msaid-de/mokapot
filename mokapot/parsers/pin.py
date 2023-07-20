@@ -318,7 +318,7 @@ def get_column_names_from_file(file):
         return perc.readline().rstrip().split("\t")
 
 
-def get_rows_from_dataframe(idx, chunk, train_psms, psms):
+def get_rows_from_dataframe(idx, chunk, train_psms, psms, file_idx):
     """
     extract rows from a chunk of a dataframe
 
@@ -330,6 +330,9 @@ def get_rows_from_dataframe(idx, chunk, train_psms, psms):
         Contains subsets of dataframes that are already extracted.
     chunk : dataframe
         Subset of a dataframe.
+    psms : OnDiskPsmDataset
+        A collection of PSMs.
+    file_idx : the index of the file being searched
 
     Returns
     -------
@@ -342,13 +345,13 @@ def get_rows_from_dataframe(idx, chunk, train_psms, psms):
     )
     for k, train in enumerate(idx):
         idx_ = list(set(train) & set(chunk.index))
-        train_psms[k].append(
+        train_psms[file_idx][k].append(
             chunk.loc[idx_].apply(pd.to_numeric, errors="ignore")
         )
 
 
 def concat_and_reindex_chunks(df, orig_idx):
-    return pd.concat(df).reindex(orig_idx)
+    return [pd.concat(df_fold).reindex(orig_idx_fold) for df_fold, orig_idx_fold in zip(df, orig_idx)]
 
 
 def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
@@ -373,21 +376,22 @@ def parse_in_chunks(psms, train_idx, chunk_size, max_workers):
         list of dataframes
     """
 
-    train_psms = [[] for _ in range(len(train_idx))]
-    for _psms, idx in zip(psms, zip(*train_idx)):
+    train_psms = [[[] for _ in range(len(train_idx))] for _ in range(len(psms))]
+    for _psms, idx, file_idx in zip(psms, zip(*train_idx), range(len(psms))):
         reader = read_file_in_chunks(
             file=_psms.filename,
             chunk_size=chunk_size,
             use_cols=_psms.columns,
         )
         Parallel(n_jobs=max_workers, require="sharedmem")(
-            delayed(get_rows_from_dataframe)(idx, chunk, train_psms, _psms)
+            delayed(get_rows_from_dataframe)(idx, chunk, train_psms, _psms, file_idx)
             for chunk in reader
         )
-    return Parallel(n_jobs=max_workers, require="sharedmem")(
+    train_psms_reordered = Parallel(n_jobs=max_workers, require="sharedmem")(
         delayed(concat_and_reindex_chunks)(df=df, orig_idx=orig_idx)
-        for df, orig_idx in zip(train_psms, (np.hstack(idx) for idx in train_idx))
+        for df, orig_idx in zip(train_psms, zip(*train_idx))
     )
+    return [pd.concat(df) for df in zip(*train_psms_reordered)]
 
 
 def _check_column(col, columns, default):
