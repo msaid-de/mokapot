@@ -47,7 +47,7 @@ jobs:
       run: |
         cd tests/integration_tests/
         Rscript make_test_data.R
-        bash test.sh
+        bash test_determinism.sh
     - name: Upload coverage to codecov
       uses: codecov/codecov-action@v3
       with:

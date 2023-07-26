@@ -1,3 +1,5 @@
+# Create mokapot input files to test determinism
+
 set.seed(1)
 N=1000
 target_scores1 = rnorm(N, mean = -5, sd = 2)
