@@ -10,23 +10,16 @@ import pytest
 pytestmark = pytest.mark.filterwarnings("error")
 
 
-@pytest.fixture
-def psms_files():
-    targets_psms = Path("data", "targets.psms")
-    decoys_psms = Path("data", "decoys.psms")
-    return targets_psms, decoys_psms
-
-
-def test_basic_cli(tmp_path, psms_files):
+def test_basic_cli(tmp_path, targets_decoys_psms_scored):
     """Test that basic cli works."""
     cmd = [
         "python",
         "-m",
         "mokapot.aggregatePsmsToPeptides",
         "--targets_psms",
-        psms_files[0],
+        targets_decoys_psms_scored[0],
         "--decoys_psms",
-        psms_files[1],
+        targets_decoys_psms_scored[1],
         "--dest_dir",
         tmp_path,
     ]
@@ -34,16 +27,16 @@ def test_basic_cli(tmp_path, psms_files):
     assert Path(tmp_path, "targets.peptides").exists()
 
 
-def test_cli_keep_decoys(tmp_path, psms_files):
+def test_cli_keep_decoys(tmp_path, targets_decoys_psms_scored):
     """Test that --keep_decoys works."""
     cmd = [
         "python",
         "-m",
         "mokapot.aggregatePsmsToPeptides",
         "--targets_psms",
-        psms_files[0],
+        targets_decoys_psms_scored[0],
         "--decoys_psms",
-        psms_files[1],
+        targets_decoys_psms_scored[1],
         "--dest_dir",
         tmp_path,
         "--keep_decoys",
@@ -53,16 +46,16 @@ def test_cli_keep_decoys(tmp_path, psms_files):
     assert Path(tmp_path, "decoys.peptides").exists()
 
 
-def test_non_default_fdr(tmp_path, psms_files):
+def test_non_default_fdr(tmp_path, targets_decoys_psms_scored):
     """Test non-defaults"""
     cmd = [
         "python",
         "-m",
         "mokapot.aggregatePsmsToPeptides",
         "--targets_psms",
-        psms_files[0],
+        targets_decoys_psms_scored[0],
         "--decoys_psms",
-        psms_files[1],
+        targets_decoys_psms_scored[1],
         "--test_fdr",
         "0.1",
         "--dest_dir",

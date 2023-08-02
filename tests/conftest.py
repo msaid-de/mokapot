@@ -5,6 +5,8 @@ import pytest
 import numpy as np
 import pandas as pd
 from mokapot import LinearPsmDataset, OnDiskPsmDataset
+from triqler.qvality import getQvaluesFromScores
+from mokapot.qvalues import tdc
 
 
 @pytest.fixture(scope="session")
@@ -251,6 +253,44 @@ def psm_files_4000(tmp_path):
     pin2 = tmp_path / "test2.tab"
     psms_df.to_csv(pin2, sep="\t", index=False)
     return [pin1, pin2]
+
+
+@pytest.fixture()
+def targets_decoys_psms_scored(tmp_path):
+    psms_t = tmp_path / "targets.psms"
+    psms_d = tmp_path / "decoys.psms"
+
+    np.random.seed(1)
+    n = 1000
+    psm_id = np.arange(1, n * 2 + 1)
+    target_scores = np.random.normal(size=n, loc=-5, scale=2)
+    decoy_scores = np.random.normal(size=n, loc=-9, scale=2)
+    scores = np.hstack([target_scores, decoy_scores])
+    label = np.hstack([np.ones(n), -np.ones(n)])
+
+    idx = np.argsort(-scores)
+    scores = scores[idx]
+    label = label[idx]
+    qval = tdc(scores, label)
+    pep = getQvaluesFromScores(target_scores, decoy_scores, includeDecoys=True)[1]
+    peptides = np.hstack([np.arange(1, n + 1), np.arange(1, n + 1)])
+    peptides.sort()
+    df = pd.DataFrame(
+        np.array([psm_id, peptides, label, scores, qval, pep]).transpose(),
+        columns=[
+            "PSMId",
+            "peptide",
+            "Label",
+            "score",
+            "q-value",
+            "posterior_error_prob",
+        ],
+    )
+    df["proteinIds"] = "dummy"
+    df[df["Label"] == 1].drop("Label", axis=1).to_csv(psms_t, sep="\t", index=False)
+    df[df["Label"] == -1].drop("Label", axis=1).to_csv(psms_d, sep="\t", index=False)
+
+    return [psms_t, psms_d]
 
 
 def _make_fasta(
