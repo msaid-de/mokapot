@@ -187,6 +187,72 @@ def psms_ondisk():
     return psms
 
 
+@pytest.fixture()
+def psm_files_4000(tmp_path):
+    """Create test files with 1000 PSMs."""
+    np.random.seed(1)
+    n = 1000
+    target_scores1 = np.random.normal(size=n, loc=-5, scale=2)
+    target_scores2 = np.random.normal(size=n, loc=0, scale=3)
+    target_scores3 = np.random.normal(size=n, loc=7, scale=4)
+    decoy_scores1 = np.random.normal(size=n, loc=-9, scale=2)
+    decoy_scores2 = np.random.normal(size=n, loc=4, scale=3)
+    decoy_scores3 = np.random.normal(size=n, loc=12, scale=4)
+    targets = pd.DataFrame(
+        np.array(
+            [np.ones(n), target_scores1, target_scores2, target_scores3]
+        ).transpose(),
+        columns=["Label", "feature1", "feature2", "feature3"],
+    )
+    decoys = pd.DataFrame(
+        np.array(
+            [-np.ones(n), decoy_scores1, decoy_scores2, decoy_scores3]
+        ).transpose(),
+        columns=["Label", "feature1", "feature2", "feature3"],
+    )
+    psms_df = pd.concat([targets, decoys]).reset_index(drop=True)
+    NC = len(psms_df)
+    psms_df["ScanNr"] = np.random.randint(1, NC // 2 + 1, NC)
+    expmass = np.hstack(
+        [
+            np.random.uniform(50, 500, NC // 2),
+            np.random.uniform(50, 500, NC // 2),
+        ]
+    )
+    expmass.sort()
+    psms_df["ExpMass"] = expmass
+    peptides = np.hstack(
+        [np.arange(1, NC // 2 + 1), np.arange(1, NC // 2 + 1)]
+    )
+    peptides.sort()
+    psms_df["Peptide"] = peptides
+    psms_df["Proteins"] = "dummy"
+    psms_df = pd.concat([psms_df, psms_df]).reset_index(drop=True)
+    psms_df["Specid"] = np.arange(1, len(psms_df) + 1)
+    psms_df = psms_df[
+        [
+            "Specid",
+            "Label",
+            "ScanNr",
+            "ExpMass",
+            "feature1",
+            "feature2",
+            "feature3",
+            "Peptide",
+            "Proteins",
+        ]
+    ]
+
+    psms_df = psms_df.sample(len(psms_df))
+    pin1 = tmp_path / "test1.tab"
+    psms_df.to_csv(pin1, sep="\t", index=False)
+
+    psms_df["Specid"] = psms_df["Specid"].sample(len(psms_df)).values
+    pin2 = tmp_path / "test2.tab"
+    psms_df.to_csv(pin2, sep="\t", index=False)
+    return [pin1, pin2]
+
+
 def _make_fasta(
     num_proteins, peptides, peptides_per_protein, random_state, prefix=""
 ):

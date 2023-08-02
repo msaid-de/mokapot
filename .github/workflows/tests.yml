@@ -43,11 +43,6 @@ jobs:
     - name: Run unit and system tests
       run: |
         pytest -v --cov=mokapot tests/
-    - name: Run integration tests
-      run: |
-        cd tests/integration_tests/
-        Rscript make_test_data.R
-        bash test_determinism.sh
     - name: Upload coverage to codecov
       uses: codecov/codecov-action@v3
       with:
