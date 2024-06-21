@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import sqlite3
 import warnings
 from contextlib import contextmanager
 from enum import Enum
-from typing import Generator, List
+from typing import Generator
 
 import numpy as np
 import pandas as pd
@@ -10,7 +12,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 import pyarrow.parquet as pq
 from typeguard import typechecked
-from numpy import dtype
 import pyarrow as pa
 
 CSV_SUFFIXES = [
@@ -28,6 +29,7 @@ CSV_SUFFIXES = [
 ]
 PARQUET_SUFFIXES = [".parquet"]
 SQLITE_SUFFIXES = [".db"]
+
 
 class TableType(Enum):
     DataFrame = "DataFrame"
@@ -71,9 +73,9 @@ class TabularDataReader(ABC):
     def from_path(
         file_name: Path, column_map: dict[str, str] | None = None, **kwargs
     ) -> "TabularDataReader":
-        # Currently, we look only at the suffix, however, in the future we could
-        # also look into the file itself (is it ascii? does it have some "magic
-        # bytes"? ...)
+        # Currently, we look only at the suffix, however, in the future we
+        # could also look into the file itself (is it ascii? does it have
+        # some "magic bytes"? ...)
         suffix = file_name.suffix
         if suffix in CSV_SUFFIXES:
             reader = CSVFileReader(file_name, **kwargs)
@@ -119,11 +121,13 @@ class ColumnMappedReader(TabularDataReader):
         return orig_columns
 
     def _get_mapped_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        # todo: enable this again...
+        # todo: enable this again... Q June2024: When?
         # if self._returned_dataframe_is_mutable():
         #     df.rename(columns=self.column_map, inplace=True, copy=False)
         # else:
-        #     df = df.rename(columns=self.column_map, inplace=False, copy=False)
+        #     df = df.rename(
+        #        columns=self.column_map, inplace=False, copy=False
+        #     )
         df = df.rename(columns=self.column_map, inplace=False)
         return df
 
@@ -289,7 +293,8 @@ class TabularDataWriter(ABC):
         columns = data.columns.tolist()
         if not columns == self.get_column_names():
             raise ValueError(
-                f"Column names {columns} do not match {self.get_column_names()}"
+                f"Column names {columns} do not "
+                f"match {self.get_column_names()}"
             )
 
         if self.column_types is not None:
@@ -300,7 +305,8 @@ class TabularDataWriter(ABC):
             # column_types = _types_from_dataframe(data)
             # if not column_types == self.get_column_types():
             #     raise ValueError(
-            #         f"Column types {column_types} do not match {self.get_column_types()}"
+            #         f"Column types {column_types} do "
+            #         f"not match {self.get_column_types()}"
             #     )
 
     def write(self, data: pd.DataFrame):
@@ -328,7 +334,11 @@ class TabularDataWriter(ABC):
 
     @staticmethod
     def from_suffix(
-        file_name: Path, columns: list[str], buffer_size: int = 0, buffer_type: TableType = TableType.DataFrame, **kwargs
+        file_name: Path,
+        columns: list[str],
+        buffer_size: int = 0,
+        buffer_type: TableType = TableType.DataFrame,
+        **kwargs,
     ) -> "TabularDataWriter":
         suffix = file_name.suffix
         if suffix in CSV_SUFFIXES:
@@ -367,7 +377,6 @@ def auto_finalize(writers: list[TabularDataWriter]):
 
 @typechecked
 class BufferedWriter(TabularDataWriter):
-
     writer: TabularDataWriter
     buffer_size: int
     buffer_type: TableType
@@ -376,8 +385,8 @@ class BufferedWriter(TabularDataWriter):
     def __init__(
         self,
         writer: TabularDataWriter,
-        buffer_size = 1000,
-        buffer_type = TableType.DataFrame,
+        buffer_size=1000,
+        buffer_type=TableType.DataFrame,
     ):
         super().__init__(writer.columns, writer.column_types)
         self.writer = writer
@@ -385,7 +394,12 @@ class BufferedWriter(TabularDataWriter):
         self.buffer_type = buffer_type
         self.buffer = None
 
-    def _buffer_slice(self, start: int = 0, end: int | None = None, as_dataframe: bool = False):
+    def _buffer_slice(
+        self,
+        start: int = 0,
+        end: int | None = None,
+        as_dataframe: bool = False,
+    ):
         if self.buffer_type == TableType.DataFrame:
             slice = self.buffer.iloc[start:end]
         else:
@@ -395,27 +409,34 @@ class BufferedWriter(TabularDataWriter):
         else:
             return slice
 
-
     def _write_buffer(self, force=False):
         if self.buffer is None:
             return
         while len(self.buffer) >= self.buffer_size:
-            self.writer.append_data(self._buffer_slice(end=self.buffer_size, as_dataframe=True))
-            self.buffer = self._buffer_slice(start=self.buffer_size, )
+            self.writer.append_data(
+                self._buffer_slice(end=self.buffer_size, as_dataframe=True)
+            )
+            self.buffer = self._buffer_slice(
+                start=self.buffer_size,
+            )
         if force and len(self.buffer) > 0:
             self.writer.append_data(self._buffer_slice(as_dataframe=True))
             self.buffer = None
 
     def append_data(self, data: pd.DataFrame | dict | list[dict] | np.record):
-
         if self.buffer_type == TableType.DataFrame:
             if not isinstance(data, pd.DataFrame):
-               raise TypeError(f"Parameter data must be of type DataFrame, not {type(data)}")
+                raise TypeError(
+                    "Parameter data must be of type DataFrame,"
+                    f" not {type(data)}"
+                )
 
             if self.buffer is None:
                 self.buffer = data.copy(deep=True)
             else:
-                self.buffer = pd.concat([self.buffer, data], axis=0, ignore_index=True)
+                self.buffer = pd.concat(
+                    [self.buffer, data], axis=0, ignore_index=True
+                )
         elif self.buffer_type == TableType.Dicts:
             if isinstance(data, dict):
                 data = [data]
@@ -427,7 +448,7 @@ class BufferedWriter(TabularDataWriter):
                 self.buffer = np.recarray(shape=(0,), dtype=data.dtype)
             self.buffer = np.append(self.buffer, data)
         else:
-            raise RuntimeError(f"Not yet done...")
+            raise RuntimeError("Not yet done...")
 
         self._write_buffer()
 
@@ -450,7 +471,6 @@ class BufferedWriter(TabularDataWriter):
 
 @typechecked
 class CSVFileWriter(TabularDataWriter):
-
     file_name: Path
 
     def __init__(
@@ -497,7 +517,6 @@ class CSVFileWriter(TabularDataWriter):
 
 @typechecked
 class ParquetFileWriter(TabularDataWriter):
-
     file_name: Path
 
     def __init__(
@@ -546,7 +565,6 @@ class ParquetFileWriter(TabularDataWriter):
 
 @typechecked
 class SqliteWriter(TabularDataWriter, ABC):
-
     connection: sqlite3.Connection
 
     def __init__(
