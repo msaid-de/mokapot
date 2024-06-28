@@ -121,7 +121,11 @@ class ColumnMappedReader(TabularDataReader):
         return orig_columns
 
     def _get_mapped_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        # todo: enable this again... Q June2024: When?
+        # todo: enable this again... Modifying in-place would be more
+        #       efficient than creating a copy, but this implementation
+        #       creates errors. Once those are ironed out we can re-enable
+        #       this code.
+        #
         # if self._returned_dataframe_is_mutable():
         #     df.rename(columns=self.column_map, inplace=True, copy=False)
         # else:
