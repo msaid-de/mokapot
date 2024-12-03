@@ -52,4 +52,4 @@ jobs:
         UV_PUBLISH_URL: https://python.pkg.github.com/${{ github.repository_owner }}/
       run: |
         uv build --no-sources
-        uv publish --repository python.pkg.github.com/${{ github.repository_owner }}
+        uv publish --publish-url https://python.pkg.github.com/${{ github.repository_owner }}/
