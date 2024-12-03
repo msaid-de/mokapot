@@ -49,7 +49,7 @@ jobs:
       env:
         UV_PUBLISH_USERNAME: __token__
         UV_PUBLISH_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        UV_PUBLISH_URL: https://python.pkg.github.com/${{ github.repository_owner }}
+        UV_PUBLISH_URL: https://python.pkg.github.com/${{ github.repository_owner }}/
       run: |
         uv build --no-sources
-        uv publish
+        uv publish --repository python.pkg.github.com/${{ github.repository_owner }}
