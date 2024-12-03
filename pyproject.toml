@@ -1,5 +1,6 @@
 [project]
-name = "@msaid-de/mokapot"
+name = "msaid-de.mokapot"
+
 authors = [
     {name = "William E. Fondrie", email = "fondriew@gmail.com"},
     {name = "Samia Ben Fredj", email = "samia.ben.fredj@msaid.de"},
