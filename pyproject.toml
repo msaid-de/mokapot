@@ -1,10 +1,12 @@
-[build-system]
-requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=3.4"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "mokapot"
-authors = [{name = "William E. Fondrie", email = "fondriew@gmail.com"}]
+name = "@msaid-de/mokapot"
+authors = [
+    {name = "William E. Fondrie", email = "fondriew@gmail.com"},
+    {name = "Samia Ben Fredj", email = "samia.ben.fredj@msaid.de"},
+    {name = "Elmar Zander", email = "elmar.zander@msaid.de"},
+    {name = "Vishal Sukumar", email = "vishal.sukumar@msaid.de"},
+    {name = "Siegfried Gessulat", email = "siegfried.gessulat@msaid.de"},
+]
 description = "Fast and flexible semi-supervised learning for peptide detection"
 license = {text = "Apache 2.0"}
 classifiers = [
@@ -31,25 +33,6 @@ dependencies = [
 ]
 dynamic = ["version"]
 
-[project.readme]
-file = "README.md"
-content-type = "text/markdown"
-
-[project.urls]
-Homepage = "https://github.com/wfondrie/mokapot"
-Documentation = "https://mokapot.readthedocs.io"
-"Bug Tracker" = "https://github.com/wfondrie/mokapot/issues"
-"Discussion Board" = "https://github.com/wfondrie/mokapot/discussions"
-
-[project.optional-dependencies]
-docs = [
-    "numpydoc>=1.0.0",
-    "sphinx-argparse>=0.2.5",
-    "sphinx-rtd-theme>=0.5.0",
-    "nbsphinx>=0.7.1",
-    "ipykernel>=5.3.0",
-    "recommonmark>=0.5.0",
-]
 
 [tool.uv]
 dev-dependencies = [
@@ -61,16 +44,27 @@ dev-dependencies = [
     "pytest-cov>=5.0.0"
 ]
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+
+[project.optional-dependencies]
+docs = [
+    "numpydoc>=1.0.0",
+    "sphinx-argparse>=0.2.5",
+    "sphinx-rtd-theme>=0.5.0",
+    "nbsphinx>=0.7.1",
+    "ipykernel>=5.3.0",
+    "recommonmark>=0.5.0",
+]
+
 [project.scripts]
 mokapot = "mokapot.mokapot:main"
-
-[tool.setuptools]
-include-package-data = false
-
-[tool.setuptools.packages]
-find = {namespaces = false}
-
-[tool.setuptools_scm]
 
 [tool.pytest.ini_options]
 testpaths = ["tests",]
