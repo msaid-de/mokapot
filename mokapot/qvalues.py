@@ -1,16 +1,18 @@
 """
 This module estimates q-values.
 """
-import numpy as np
-import numba as nb
-from typeguard import typechecked
+
 from typing import Callable
 
+import numba as nb
+import numpy as np
+from typeguard import typechecked
+
 from mokapot.peps import (
-    peps_from_scores_hist_nnls,
-    monotonize_simple,
-    hist_data_from_scores,
     estimate_pi0_by_slope,
+    hist_data_from_scores,
+    monotonize_simple,
+    peps_from_scores_hist_nnls,
     TDHistData,
 )
 
@@ -26,9 +28,7 @@ QVALUE_ALGORITHM = {
 
 
 @typechecked
-def tdc(
-    scores: np.ndarray[float], target: np.ndarray[bool], desc: bool = True
-):
+def tdc(scores: np.ndarray[float], target: np.ndarray[bool], desc: bool = True):
     """Estimate q-values using target decoy competition.
 
     Estimates q-values using the simple target decoy competition method.
@@ -220,8 +220,7 @@ def qvalues_from_scores(
         return qvalue_function(scores, targets)
     else:
         raise ValueError(
-            "Unknown qvalue algorithm in qvalues_from_scores:"
-            f" {qvalue_algorithm}"
+            "Unknown qvalue algorithm in qvalues_from_scores:" f" {qvalue_algorithm}"
         )
 
 
@@ -280,18 +279,12 @@ def qvalues_from_peps(
 
     target_scores = scores_sorted[targets_sorted]
     target_peps = peps_sorted[targets_sorted]
-    target_fdr = target_peps.cumsum() / np.arange(
-        1, len(target_peps) + 1, dtype=float
-    )
-    target_qvalues = monotonize_simple(
-        target_fdr, ascending=True, reverse=True
-    )
+    target_fdr = target_peps.cumsum() / np.arange(1, len(target_peps) + 1, dtype=float)
+    target_qvalues = monotonize_simple(target_fdr, ascending=True, reverse=True)
 
     # Note: we need to flip the arrays again, since interp needs scores in
     #   ascending order
-    qvalues = np.interp(
-        scores, np.flip(target_scores), np.flip(target_qvalues)
-    )
+    qvalues = np.interp(scores, np.flip(target_scores), np.flip(target_qvalues))
     return qvalues
 
 
@@ -354,11 +347,14 @@ def qvalues_from_counts(
         * ((~targets_sorted).cumsum() + 1)
         / np.maximum(targets_sorted.cumsum(), 1)
     )
-    qvalues_sorted = monotonize_simple(
-        fdr_sorted, ascending=True, reverse=True
-    )
+    qvalues_sorted = monotonize_simple(fdr_sorted, ascending=True, reverse=True)
 
     # Extract unique scores and take qvalue from the last of them
+    # (for each unique score we need the unique qvalue, the extra return values
+    # are needed to get the correct one and to map them back later to the full
+    # array. See np.unique and do the math ;)
+    # Note: if all scores are uniq this step could be skipped and maybe some
+    # cpu cycles saved.
     scores_uniq, idx_uniq, rev_uniq, cnt_uniq = np.unique(
         scores_sorted,
         return_index=True,
@@ -366,7 +362,10 @@ def qvalues_from_counts(
         return_inverse=True,
     )
     qvalues_uniq = qvalues_sorted[idx_uniq + cnt_uniq - 1]
-    qvalues = qvalues_uniq[rev_uniq]
+
+    # Map unique values back, but in original order
+    qvalues = np.zeros_like(qvalues_sorted)
+    qvalues[ind] = qvalues_uniq[rev_uniq]
 
     return np.clip(qvalues, 0.0, 1.0)
 
@@ -411,9 +410,7 @@ def qvalues_func_from_hist(
 
     fdr_flipped = factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
     fdr_flipped = np.clip(fdr_flipped, 0.0, 1.0)
-    qvalues_flipped = monotonize_simple(
-        fdr_flipped, ascending=True, reverse=True
-    )
+    qvalues_flipped = monotonize_simple(fdr_flipped, ascending=True, reverse=True)
     qvalues = np.flip(qvalues_flipped)
 
     # We need to append zero to end of the qvalues for right edge of the last
@@ -423,3 +420,72 @@ def qvalues_func_from_hist(
     eval_scores = hist_data.targets.bin_edges
 
     return lambda scores: np.interp(scores, eval_scores, qvalues)
+
+
+@typechecked
+def qvalues_from_storeys_algo(
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
+    pi0: float | None = None,
+    decoy_qvals_by_interp: bool = True,
+    pvalue_method: str = "conservative",
+):
+    """
+    Calculates q-values for a set of scores using Storey's algorithm.
+
+    The function computes empirical p-values, estimates the proportion of
+    null hypotheses (`pi0`), and subsequently calculates the q-values,
+    which are adjusted p-values used in multiple hypothesis testing.
+
+    Parameters
+    ----------
+    scores : np.ndarray[float]
+        Array of scores for which q-values are computed. Must be of
+        type float.
+    targets : np.ndarray[bool]
+        Binary array indicating whether a score is a target (`True`) or
+        a decoy (`False`). Must have the same shape as `scores`.
+    pi0 : float, optional
+        Proportion of null hypotheses in the dataset. If not provided,
+        it is estimated from the p-values using the "smoother" method
+        with evaluation at lambda = 0.5.
+    decoy_qvals_by_interp : bool, optional
+        Whether to calculate q-values for decoys by interpolating from
+        target q-values (`True`) or calculate decoy q-values independently
+        as 1:1 p-values (`False`). Defaults to `True`.
+    pvalue_method : str, optional
+        Method to calculate empirical p-values. Acceptable values are
+        mode-based methods such as "conservative". Defaults to
+        "conservative".
+
+    Returns
+    -------
+    np.ndarray[float]
+        An array of q-values corresponding to the input `scores`, where
+        lower scores generally indicate a higher likelihood of being a
+        target. The q-values are adjusted for multiple hypothesis testing.
+    """
+    import mokapot.qvalues_storey as qvalues_storey
+
+    stat1 = scores[targets]
+    stat0 = scores[~targets]
+
+    pvals1 = qvalues_storey.empirical_pvalues(stat1, stat0, mode=pvalue_method)
+
+    if pi0 is None:
+        pi0est = qvalues_storey.estimate_pi0(pvals1, method="smoother", eval_lambda=0.5)
+        pi0 = pi0est.pi0
+
+    qvals1 = qvalues_storey.qvalues(pvals1, pi0=pi0, small_p_correction=False)
+
+    if decoy_qvals_by_interp:
+        ind = np.argsort(stat1)
+        qvals0 = np.interp(stat0, stat1[ind], qvals1[ind])
+    else:
+        pvals0 = qvalues_storey.empirical_pvalues(stat0, stat0, mode=pvalue_method)
+        qvals0 = qvalues_storey.qvalues(pvals0, pi0=1)
+
+    qvals = np.zeros_like(scores)
+    qvals[targets] = qvals1
+    qvals[~targets] = qvals0
+    return qvals
