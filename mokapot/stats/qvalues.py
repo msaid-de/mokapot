@@ -8,6 +8,7 @@ import numba as nb
 import numpy as np
 from typeguard import typechecked
 
+import mokapot.stats.pvalues as pvalues
 from mokapot.stats.peps import (
     estimate_pi0_by_slope,
     hist_data_from_scores,
@@ -450,7 +451,7 @@ def qvalues_from_storeys_algo(
     stat1 = scores[targets]
     stat0 = scores[~targets]
 
-    pvals1 = qvalues_storey.empirical_pvalues(stat1, stat0, mode=pvalue_method)
+    pvals1 = pvalues.empirical_pvalues(stat1, stat0, mode=pvalue_method)
 
     if pi0 is None:
         pi0est = qvalues_storey.estimate_pi0(pvals1, method="smoother", eval_lambda=0.5)
@@ -462,7 +463,7 @@ def qvalues_from_storeys_algo(
         ind = np.argsort(stat1)
         qvals0 = np.interp(stat0, stat1[ind], qvals1[ind])
     else:
-        pvals0 = qvalues_storey.empirical_pvalues(stat0, stat0, mode=pvalue_method)
+        pvals0 = pvalues.empirical_pvalues(stat0, stat0, mode=pvalue_method)
         qvals0 = qvalues_storey.qvalues(pvals0, pi0=1)
 
     qvals = np.zeros_like(scores, dtype=float)

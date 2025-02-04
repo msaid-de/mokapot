@@ -17,6 +17,7 @@ import numpy as np
 from typeguard import typechecked
 
 import mokapot.stats.peps as peps
+import mokapot.stats.pvalues as pvalues
 import mokapot.stats.qvalues as qvalues
 import mokapot.stats.qvalues_storey as qvalues_storey
 
@@ -65,7 +66,7 @@ class StoreyPi0Algorithm(Pi0EstAlgorithm):
         self.eval_lambda = eval_lambda
 
     def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
-        pvals = qvalues_storey.empirical_pvalues(
+        pvals = pvalues.empirical_pvalues(
             scores[targets], scores[~targets], mode="conservative"
         )
         pi0est = qvalues_storey.estimate_pi0(
