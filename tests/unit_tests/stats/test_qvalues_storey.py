@@ -3,8 +3,9 @@ import json
 import numpy as np
 from pytest import approx
 
+from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.pvalues import empirical_pvalues
-from mokapot.stats.qvalues_storey import estimate_pi0, qvalues
+from mokapot.stats.qvalues import qvalues_from_pvalues
 
 
 def test_empirical_pvalues():
@@ -100,7 +101,7 @@ def test_estimate_pi0_from_R():
 
     # Compute pi0 with bootstrap method
     lambdas = np.arange(0.05, 1, 0.05)
-    pi0est = estimate_pi0(pvalues, method="bootstrap", lambdas=lambdas)
+    pi0est = pi0_from_pvalues_storey(pvalues, method="bootstrap", lambdas=lambdas)
     assert pi0est.pi0 == approx(0.6763407)
     assert pi0est.mse is not None
     assert pi0est.pi0s_raw[np.argmin(pi0est.mse)] == pi0est.pi0
@@ -109,13 +110,13 @@ def test_estimate_pi0_from_R():
     # in R, since the smoothing method is different the difference is relatively
     # large)
     lambdas = np.arange(0.2, 0.95, 0.01)
-    pi0est = estimate_pi0(pvalues, lambdas=lambdas, eval_lambda=0.8)
+    pi0est = pi0_from_pvalues_storey(pvalues, lambdas=lambdas, eval_lambda=0.8)
     assert pi0est.pi0 == approx(0.6931328, abs=0.01)
 
     # Compute pi0 with fixed lambda
-    pi0est = estimate_pi0(pvalues, method="fixed", eval_lambda=0.7)
+    pi0est = pi0_from_pvalues_storey(pvalues, method="fixed", eval_lambda=0.7)
     assert pi0est.pi0 == approx(0.701367)
-    pi0est = estimate_pi0(pvalues, method="fixed", eval_lambda=0.3)
+    pi0est = pi0_from_pvalues_storey(pvalues, method="fixed", eval_lambda=0.3)
     assert pi0est.pi0 == approx(0.7138351)
 
 
@@ -125,6 +126,8 @@ def test_qvalues_storey():
     pvals = np.array(data["pvalues"])
     qvals_expect = np.array(data["qvalues"])
 
-    pi0est = estimate_pi0(pvals, method="bootstrap", lambdas=np.arange(0.05, 1, 0.05))
-    qvals = qvalues(pvals, pi0=pi0est.pi0)
+    pi0est = pi0_from_pvalues_storey(
+        pvals, method="bootstrap", lambdas=np.arange(0.05, 1, 0.05)
+    )
+    qvals = qvalues_from_pvalues(pvals, pi0=pi0est.pi0)
     np.testing.assert_almost_equal(qvals, qvals_expect)

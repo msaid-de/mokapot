@@ -4,8 +4,10 @@ import numpy as np
 import pytest
 import scipy as sp
 from pytest import approx
+from typeguard import TypeCheckError
 
-from mokapot.stats.statistics import HistData, OnlineStatistics
+from mokapot.stats.histdata import HistData
+from mokapot.stats.statistics import OnlineStatistics
 
 
 def test_init():
@@ -133,5 +135,5 @@ def test_binning():
         np.histogram_bin_edges(x, bins=200)
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, TypeCheckError, TypeError)):
         HistData.get_bin_edges(stats, name="xyz")

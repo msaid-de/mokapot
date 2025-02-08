@@ -8,6 +8,8 @@ from pytest import approx
 from scipy import stats
 
 import mokapot.stats.peps as peps
+from mokapot.stats.histdata import hist_data_from_iterator, hist_data_from_scores
+from mokapot.stats.utils import fit_nnls, monotonize, monotonize_nnls, monotonize_simple
 
 
 def get_target_decoy_data():
@@ -48,52 +50,52 @@ def toc():
 
 def test_monotonize_simple():
     # ascending
-    assert (peps.monotonize_simple([1, 2, 1, 3], True) == [1, 2, 2, 3]).all()
+    assert (monotonize_simple([1, 2, 1, 3], True) == [1, 2, 2, 3]).all()
     # descending
-    assert (peps.monotonize_simple([3, 2, 3, 1], False) == [3, 2, 2, 1]).all()
+    assert (monotonize_simple([3, 2, 3, 1], False) == [3, 2, 2, 1]).all()
     # emtpy array
-    assert (peps.monotonize_simple([], True) == []).all()
-    assert (peps.monotonize_simple([], False) == []).all()
+    assert (monotonize_simple([], True) == []).all()
+    assert (monotonize_simple([], False) == []).all()
     # single element
-    assert (peps.monotonize_simple([5], True) == [5]).all()
-    assert (peps.monotonize_simple([5], False) == [5]).all()
+    assert (monotonize_simple([5], True) == [5]).all()
+    assert (monotonize_simple([5], False) == [5]).all()
 
 
 def test_monotonize():
     x = np.array([2, 3, 1], dtype=float)
     w = np.array([2, 1, 10])
-    y = peps.monotonize_nnls(x, w, False)
+    y = monotonize_nnls(x, w, False)
     testing.assert_allclose(y, np.array([7 / 3, 7 / 3, 1]))
     w = np.array([3, 1, 1])
-    y = peps.monotonize_nnls(x, w, True)
+    y = monotonize_nnls(x, w, True)
     testing.assert_allclose(y, np.array([2, 2, 2]))
     w = np.array([1, 3, 1])
-    y = peps.monotonize_nnls(x, w, True)
+    y = monotonize_nnls(x, w, True)
     testing.assert_allclose(y, np.array([2, 2.5, 2.5]))
 
     # Test to check monotonize on a larger array
     np.random.seed(0)
     random_array = np.random.rand(1000)
-    assert np.all(np.diff(peps.monotonize(random_array, True)) >= 0)
-    assert np.all(np.diff(peps.monotonize(random_array, False)) <= 0)
+    assert np.all(np.diff(monotonize(random_array, True)) >= 0)
+    assert np.all(np.diff(monotonize(random_array, False)) <= 0)
 
     # Test to check simple_averaging parameter when set to True
     assert np.allclose(
-        peps.monotonize(np.array([1.0, 2, 5, 4, 3]), True, True),
+        monotonize(np.array([1.0, 2, 5, 4, 3]), True, True),
         np.array([1, 2, 4, 4, 4]),
     )
     assert np.allclose(
-        peps.monotonize(np.array([1.0, 2, 6, 6, 3]), True, True),
+        monotonize(np.array([1.0, 2, 6, 6, 3]), True, True),
         np.array([1, 2, 4.5, 4.5, 4.5]),
     )
 
     # Test to check simple_averaging parameter when set to False
     assert np.allclose(
-        peps.monotonize(np.array([1.0, 2, 5, 4, 3]), True, False),
+        monotonize(np.array([1.0, 2, 5, 4, 3]), True, False),
         np.array([1, 2, 4, 4, 4]),
     )
     assert np.allclose(
-        peps.monotonize(np.array([1.0, 2, 6, 6, 3]), True, False),
+        monotonize(np.array([1.0, 2, 6, 6, 3]), True, False),
         np.array([1, 2, 5, 5, 5]),
     )
 
@@ -103,12 +105,12 @@ def test_fit_nnls0():
     k = np.array([1, 0, 0, 1, 1, 1, 2, 1])
     p_asc = np.array([0, 0, 0, 1 / 2, 1, 1, 1, 1])
 
-    p1 = peps.fit_nnls(n, k, ascending=True, erase_zeros=True)
+    p1 = fit_nnls(n, k, ascending=True, erase_zeros=True)
     np.testing.assert_allclose(p1, p_asc, atol=1e-15)
-    p2 = peps.fit_nnls(n, k, ascending=True, erase_zeros=False)
+    p2 = fit_nnls(n, k, ascending=True, erase_zeros=False)
     np.testing.assert_allclose(p2, p_asc, atol=1e-15)
 
-    _ = peps.fit_nnls(n, k, ascending=False)
+    _ = fit_nnls(n, k, ascending=False)
 
 
 def test_fit_nnls_zeros():
@@ -117,33 +119,33 @@ def test_fit_nnls_zeros():
     # Simple three element array
     n = np.array([1, 0, 1])
     k = np.array([0, 0, 1])
-    p = peps.fit_nnls(n, k, ascending=True)
+    p = fit_nnls(n, k, ascending=True)
     assert p == approx([0, 1 / 2, 1])
-    p = peps.fit_nnls(n, k, ascending=True, erase_zeros=True)
+    p = fit_nnls(n, k, ascending=True, erase_zeros=True)
     assert p == approx([0, 1 / 2, 1])
 
     # Two zeros after each other
     n = np.array([1, 1, 0, 0, 1, 1])
     k = np.array([0, 0, 0, 0, 1, 1])
-    p = peps.fit_nnls(n, k, ascending=True)
+    p = fit_nnls(n, k, ascending=True)
     assert p == approx([0, 0, 1 / 3, 2 / 3, 1, 1])
-    p = peps.fit_nnls(n, k, ascending=True, erase_zeros=True)
+    p = fit_nnls(n, k, ascending=True, erase_zeros=True)
     assert p == approx([0, 0, 1 / 3, 2 / 3, 1, 1])
 
     # Tricky: n==0 at the end
     n = np.array([1, 1, 0, 0, 1, 0])
     k = np.array([0, 0, 0, 0, 1, 1])
-    p = peps.fit_nnls(n, k, ascending=True)
+    p = fit_nnls(n, k, ascending=True)
     assert p == approx([0, 0, 1 / 3, 2 / 3, 1, 1])
-    p = peps.fit_nnls(n, k, ascending=True, erase_zeros=True)
+    p = fit_nnls(n, k, ascending=True, erase_zeros=True)
     assert p == approx([0, 0, 1 / 3, 2 / 3, 1, 1])
 
     # Descending
     n = np.array([1, 1, 0, 0, 1, 1])
     k = np.array([0, 0, 0, 0, 1, 1])
-    p = peps.fit_nnls(n, k, ascending=False)
+    p = fit_nnls(n, k, ascending=False)
     assert p == pytest.approx([1 / 2, 1 / 2, 1 / 2, 1 / 2, 1 / 2, 1 / 2])
-    p = peps.fit_nnls(n, k, ascending=False, erase_zeros=True)
+    p = fit_nnls(n, k, ascending=False, erase_zeros=True)
     assert p == pytest.approx([1 / 2, 1 / 2, 1 / 2, 1 / 2, 1 / 2, 1 / 2])
 
 
@@ -155,8 +157,8 @@ def test_fit_nnls_zeros_mult(caplog):
         N = 6
         n = np.random.randint(size=N, low=0, high=5)
         k = np.random.random(size=N) * n
-        p1 = peps.fit_nnls(n, 0.5 * k, ascending=False)
-        p2 = peps.fit_nnls(n, 2 * k, ascending=False)
+        p1 = fit_nnls(n, 0.5 * k, ascending=False)
+        p2 = fit_nnls(n, 2 * k, ascending=False)
         assert p1 == approx(0.25 * p2)
 
 
@@ -187,10 +189,10 @@ def test_fit_nnls_peps():
         + [11.5292992125763, 5.76464960628815, 5.044068405502131]
         + [3.6029060039300935, 0.0, 2.882324803144075, 0.0, 0.0, 0.0]
     )
-    p = peps.fit_nnls(n0, k0, ascending=True, erase_zeros=True)
+    p = fit_nnls(n0, k0, ascending=True, erase_zeros=True)
     assert np.all(np.diff(p) >= 0)
     assert np.linalg.norm(k0 - n0 * p, np.inf) < 40
-    p = peps.fit_nnls(n0, k0, ascending=True, erase_zeros=not True)
+    p = fit_nnls(n0, k0, ascending=True, erase_zeros=not True)
     assert np.all(np.diff(p) >= 0)
     assert np.linalg.norm(k0 - n0 * p, np.inf) < 40
 
@@ -248,8 +250,8 @@ def test_hist_data_from_iterator():
             yield scores[i : i + chunksize], targets[i : i + chunksize]
 
     bins = np.histogram_bin_edges(scores, bins=31)
-    e0, t0, d0 = peps.hist_data_from_scores(scores, targets, bins=bins).as_counts()
-    e1, t1, d1 = peps.hist_data_from_iterator(
+    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_counts()
+    e1, t1, d1 = hist_data_from_iterator(
         score_iterator(scores, targets), bin_edges=bins
     ).as_counts()
     assert e0 == approx(e1)
@@ -257,8 +259,8 @@ def test_hist_data_from_iterator():
     assert d0 == approx(d1)
 
     bins = np.histogram_bin_edges(scores, bins=17)
-    e0, t0, d0 = peps.hist_data_from_scores(scores, targets, bins=bins).as_densities()
-    e1, t1, d1 = peps.hist_data_from_iterator(
+    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_densities()
+    e1, t1, d1 = hist_data_from_iterator(
         score_iterator(scores, targets, chunksize=7), bin_edges=bins
     ).as_densities()
     assert e0 == approx(e1)

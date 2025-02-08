@@ -16,10 +16,10 @@ from abc import ABC, abstractmethod
 import numpy as np
 from typeguard import typechecked
 
-import mokapot.stats.peps as peps
+import mokapot.stats.pi0est as pi0est
 import mokapot.stats.pvalues as pvalues
 import mokapot.stats.qvalues as qvalues
-import mokapot.stats.qvalues_storey as qvalues_storey
+from mokapot.stats.histdata import hist_data_from_scores
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,13 +69,13 @@ class StoreyPi0Algorithm(Pi0EstAlgorithm):
         pvals = pvalues.empirical_pvalues(
             scores[targets], scores[~targets], mode="conservative"
         )
-        pi0est = qvalues_storey.estimate_pi0(
+        pi0 = pi0est.pi0_from_pvalues_storey(
             pvals,
             method=self.method,
             lambdas=np.arange(0.2, 0.8, 0.01),
             eval_lambda=self.eval_lambda,
-        )
-        return pi0est.pi0
+        ).pi0
+        return pi0
 
     def long_desc(self):
         return f"storey_pi0(method={self.method}, lambda={self.eval_lambda})"
@@ -87,10 +87,10 @@ class SlopePi0Algorithm(Pi0EstAlgorithm):
         self.slope_threshold = slope_threshold
 
     def estimate(self, scores, targets):
-        hist_data = peps.hist_data_from_scores(scores, targets, bins=self.bins)
+        hist_data = hist_data_from_scores(scores, targets, bins=self.bins)
         hist_data.as_densities()
         _, target_density, decoy_density = hist_data.as_densities()
-        return peps.estimate_pi0_by_slope(
+        return pi0est.pi0_from_pdfs_by_slope(
             target_density, decoy_density, threshold=self.slope_threshold
         )
 
@@ -107,7 +107,7 @@ class QvalueAlgorithm(ABC):
     qvalue_algo = None
 
     @abstractmethod
-    def qvalues(self, scores, targets, desc):
+    def estimate(self, scores, targets, desc):
         raise NotImplementedError
 
     @classmethod
@@ -116,7 +116,7 @@ class QvalueAlgorithm(ABC):
 
     @classmethod
     def eval(cls, scores, targets, desc=True):
-        return cls.qvalue_algo.qvalues(scores, targets, desc)
+        return cls.qvalue_algo.estimate(scores, targets, desc)
 
     @classmethod
     def long_desc(cls):
@@ -125,8 +125,8 @@ class QvalueAlgorithm(ABC):
 
 @typechecked
 class TDCQvalueAlgorithm(QvalueAlgorithm):
-    def qvalues(self, scores, targets, desc):
-        return qvalues.tdc(scores, target=targets, desc=desc)
+    def estimate(self, scores, targets, desc):
+        return qvalues.qvalues_from_counts_tdc(scores, targets=targets, desc=desc)
 
     def long_desc(self):
         return "mokapot tdc algorithm"
@@ -137,7 +137,9 @@ class CountsQvalueAlgorithm(QvalueAlgorithm):
     def __init__(self, tdc: bool):
         self.tdc = tdc
 
-    def qvalues(self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool):
+    def estimate(
+        self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool
+    ):
         if not desc:
             scores = -scores
         qvals = qvalues.qvalues_from_counts(scores, targets, is_tdc=self.tdc)
@@ -154,7 +156,9 @@ class StoreyQvalueAlgorithm(QvalueAlgorithm):
         self.pvalue_method = pvalue_method
         self.pi0_algo = pi0_algo
 
-    def qvalues(self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool):
+    def estimate(
+        self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool
+    ):
         pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
         pi0 = pi0_algo.estimate(scores, targets)
         LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
@@ -217,12 +221,3 @@ def configure_algorithms(config):
 
 
 QvalueAlgorithm.set_algorithm(TDCQvalueAlgorithm())
-
-
-"""
-todo:
- * try slope method for pi0 estimation on pvalues
- * check and improve pvalue computation for discrete distributions
- * check pi0 estimation with ratios for tdc/storey
- * implement storey with bootstrap
-"""

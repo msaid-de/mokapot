@@ -6,15 +6,16 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from mokapot.stats.peps import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.peps import peps_from_scores_hist_nnls
 from mokapot.stats.qvalues import (
     qvalues_from_counts,
+    qvalues_from_counts_tdc,
     qvalues_from_peps,
     qvalues_from_storeys_algo,
     qvalues_func_from_hist,
-    tdc,
 )
-from ..helpers.utils import TestOutcome
+from tests.helpers.utils import TestOutcome
 
 
 @pytest.fixture
@@ -94,41 +95,27 @@ def qvalues_are_valid(qvalues, scores=None):
     return TestOutcome.success()
 
 
-@pytest.mark.parametrize("dtype", [np.float64, np.uint8, np.int8, np.float32])
-def test_tdc_descending(desc_scores, dtype):
+def test_tdc_descending(desc_scores):
     """Test that q-values are correct for descending scores"""
     scores, target, true_qvals = desc_scores
-    qvals = tdc(scores.astype(dtype), target, desc=True)
-    np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
-
-    qvals = tdc(scores, target.astype(dtype), desc=True)
+    qvals = qvalues_from_counts_tdc(scores, target, desc=True)
     np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
 
 
-@pytest.mark.parametrize("dtype", [np.float64, np.uint8, np.int8, np.float32])
-def test_tdc_ascending(asc_scores, dtype):
+def test_tdc_ascending(asc_scores):
     """Test that q-values are correct for ascending scores"""
     scores, target, true_qvals = asc_scores
 
-    # Q - June2024 JSP: Since the function is type-checked, what is the purpose
-    # of testing different types? Shouldnt they all fail?
-
-    qvals = tdc(scores.astype(dtype), target, desc=False)
-    # Testing equality in floats is not a good idea ...
-    # So assert_allclose is used over assert_array_equal
-    # Since for our purposes 0.333333333333 == 1/3
-    np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
-
-    qvals = tdc(scores, target.astype(dtype), desc=False)
+    qvals = qvalues_from_counts_tdc(scores, target, desc=False)
     np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
 
 
 def test_tdc_diff_len():
     """If the arrays are different lengths, should get a ValueError"""
-    scores = np.array([1, 2, 3, 4, 5])
+    scores = np.array([1, 2, 3, 4, 5], dtype=float)
     targets = np.array([True] * 3 + [False] * 3)
     with pytest.raises(ValueError):
-        tdc(scores, targets)
+        qvalues_from_counts_tdc(scores, targets)
 
 
 @pytest.fixture
@@ -179,7 +166,8 @@ def test_qvalues_from_peps(rand_scores, is_tdc):
     #   (of course, up to some error margin and fixing the random seed),
     #   and also against shuffeling of the target/decoy sequences.
     scores, targets = rand_scores
-    qvalues = qvalues_from_peps(scores, targets, is_tdc)
+    peps = peps_from_scores_hist_nnls(scores, targets, is_tdc)
+    qvalues = qvalues_from_peps(scores, targets, is_tdc, peps)
     assert qvalues_are_valid(qvalues, scores)
 
 
@@ -244,7 +232,7 @@ def test_qvalues_discrete(rand_scores):
     scores, targets = rand_scores
     scores = np.asarray(scores > scores.mean(), dtype=float)
 
-    qvals_tdc = tdc(scores, targets)
+    qvals_tdc = qvalues_from_counts_tdc(scores, targets)
 
     qvals_counts = qvalues_from_counts(scores, targets, is_tdc=True)
     np.testing.assert_allclose(qvals_counts, qvals_tdc)

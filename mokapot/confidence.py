@@ -31,14 +31,14 @@ from mokapot.constants import CONFIDENCE_CHUNK_SIZE
 from mokapot.dataset import OnDiskPsmDataset
 from mokapot.picked_protein import picked_protein
 from mokapot.stats.algorithms import QvalueAlgorithm
+from mokapot.stats.histdata import HistData, TDHistData
 from mokapot.stats.peps import (
     peps_from_scores,
     peps_func_from_hist_nnls,
     PepsConvergenceError,
-    TDHistData,
 )
 from mokapot.stats.qvalues import qvalues_func_from_hist
-from mokapot.stats.statistics import HistData, OnlineStatistics
+from mokapot.stats.statistics import OnlineStatistics
 from mokapot.tabular_data import (
     BufferType,
     ColumnMappedReader,
