@@ -118,7 +118,7 @@ def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
         ("--verbosity", 2),
     ]
 
-    def run_brew_rollup2(subdir: str, extra_params: list = []):
+    def brew_rollup_and_read_df(subdir: str, extra_params: list = []):
         run_brew_rollup(
             rollup_params + ["--dest_dir", rollup_dest_dir / subdir] + extra_params,
             capture_output=False,
@@ -128,7 +128,7 @@ def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
         df = TabularDataReader.from_path(file).read()
         return df
 
-    df0 = run_brew_rollup2("rollup0")
+    df0 = brew_rollup_and_read_df("rollup0")
     qval_column = "q-value"
 
     # Note: this maximum difference is relatively large here (about 0.048),
@@ -137,7 +137,7 @@ def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
     # the pure counting method does not do.
     # Todo: maybe it would be worthwile to have a much finer histogram with
     #   much more bins for q-value calculation then for peps calculation
-    df1 = run_brew_rollup2("rollup1", ["--stream_confidence"])
+    df1 = brew_rollup_and_read_df("rollup1", ["--stream_confidence"])
     assert_series_equal(df0[qval_column], df1[qval_column], atol=0.05)
     assert estimate_abs_int(df0.score, df1[qval_column] - df0[qval_column]) < 0.05
     assert (
@@ -145,12 +145,12 @@ def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
         < 0.03
     )
 
-    df2 = run_brew_rollup2("rollup2", [("--qvalue_algorithm", "storey")])
+    df2 = brew_rollup_and_read_df("rollup2", [("--qvalue_algorithm", "storey")])
     assert_series_equal(df0[qval_column], df2[qval_column], atol=0.001)
     assert_allclose(df0[qval_column], df2[qval_column], atol=0.001)
     assert estimate_abs_int(df0.score, df2[qval_column] - df0[qval_column]) < 0.001
 
-    df3 = run_brew_rollup2(
+    df3 = brew_rollup_and_read_df(
         "rollup2",
         [("--qvalue_algorithm", "storey"), ("--pi0_algorithm", "storey_fixed")],
     )
