@@ -167,7 +167,7 @@ def test_qvalues_from_peps(rand_scores, is_tdc):
     #   and also against shuffeling of the target/decoy sequences.
     scores, targets = rand_scores
     peps = peps_from_scores_hist_nnls(scores, targets, is_tdc)
-    qvalues = qvalues_from_peps(scores, targets, is_tdc, peps)
+    qvalues = qvalues_from_peps(scores, targets, peps)
     assert qvalues_are_valid(qvalues, scores)
 
 
