@@ -4,7 +4,6 @@ This module estimates q-values.
 
 from typing import Callable
 
-import numba as nb
 import numpy as np
 from typeguard import typechecked
 
@@ -75,93 +74,7 @@ def qvalues_from_counts_tdc(
     # todo: I think the allowed data types are way to general and lenient. scores
     # should me maximally integer|floating (but better just float) and targets
     # should only be bool, nothing else. The rest is the job of the calling code.
-
-    scores = np.array(scores)
-    targets = np.array(targets)
-
-    if scores.shape[0] != targets.shape[0]:
-        raise ValueError("'scores' and 'target' must be the same length")
-
-    # Sort and estimate FDR
-    if desc:
-        srt_idx = np.argsort(-scores)
-    else:
-        srt_idx = np.argsort(scores)
-
-    scores = scores[srt_idx]
-    targets = targets[srt_idx]
-    cum_targets = targets.cumsum()
-    cum_decoys = ((targets - 1) ** 2).cumsum()
-    num_total = cum_targets + cum_decoys
-
-    # Handles zeros in denominator
-    fdr = np.divide(
-        (cum_decoys + 1),
-        cum_targets,
-        out=np.ones_like(cum_targets, dtype=np.float32),
-        where=(cum_targets != 0),
-    )
-
-    # Calculate q-values
-    unique_metric, indices = np.unique(scores, return_counts=True)
-
-    # Some arrays need to be flipped so that we can loop through from
-    # worse to best score.
-    fdr = np.flip(fdr)
-    num_total = np.flip(num_total)
-    if not desc:
-        unique_metric = np.flip(unique_metric)
-        indices = np.flip(indices)
-
-    qvals = _fdr2qvalue(fdr, num_total, unique_metric, indices)
-    qvals = np.flip(qvals)
-    qvals = qvals[np.argsort(srt_idx)]
-
-    return qvals
-
-
-@nb.njit
-def _fdr2qvalue(fdr, num_total, met, indices):
-    """Quickly turn a list of FDRs to q-values.
-
-    All of the inputs are assumed to be sorted.
-
-    Parameters
-    ----------
-    fdr : numpy.ndarray
-        A vector of all unique FDR values.
-    num_total : numpy.ndarray
-        A vector of the cumulative number of PSMs at each score.
-    met : numpy.ndarray
-        A vector of the scores for each PSM.
-    indices : tuple of numpy.ndarray
-        Tuple where the vector at index i indicates the PSMs that
-        shared the unique FDR value in `fdr`.
-
-    Returns
-    -------
-    numpy.ndarray
-        A vector of q-values.
-    """
-    min_q = 1
-    qvals = np.ones(len(fdr))
-    group_fdr = np.ones(len(fdr))
-    prev_idx = 0
-    for idx in range(met.shape[0]):
-        next_idx = prev_idx + indices[idx]
-        group = slice(prev_idx, next_idx)
-        prev_idx = next_idx
-
-        fdr_group = fdr[group]
-        n_group = num_total[group]
-        curr_fdr = fdr_group[np.argmax(n_group)]
-        if curr_fdr < min_q:
-            min_q = curr_fdr
-
-        group_fdr[group] = curr_fdr
-        qvals[group] = min_q
-
-    return qvals
+    return qvalues_from_counts(scores, targets, is_tdc=True, desc=desc)
 
 
 @typechecked
@@ -262,7 +175,10 @@ def qvalues_from_peps(
 
 @typechecked
 def qvalues_from_counts(
-    scores: np.ndarray[float], targets: np.ndarray[bool], is_tdc: bool
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
+    is_tdc: bool = True,
+    desc: bool = True,
 ):
     r"""
     Compute qvalues from target/decoy counts.
@@ -300,6 +216,8 @@ def qvalues_from_counts(
     array:
         Array of q-values computed from peps.
     """
+    if not desc:
+        scores = -scores
 
     if is_tdc:
         factor = 1
