@@ -13,16 +13,6 @@ from mokapot.stats.histdata import hist_data_from_scores, TDHistData
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope, pi0_from_pvalues_storey
 from mokapot.stats.utils import monotonize_simple
 
-QVALUE_ALGORITHM = {
-    "tdc": lambda scores, targets: qvalues_from_counts_tdc(scores, targets, desc=True),
-    "from_peps": lambda scores, targets: qvalues_from_peps(
-        scores, targets, is_tdc=True
-    ),
-    "from_counts": lambda scores, targets: qvalues_from_counts(
-        scores, targets, is_tdc=True
-    ),
-}
-
 
 @typechecked
 def qvalues_from_counts_tdc(
@@ -75,44 +65,6 @@ def qvalues_from_counts_tdc(
     # should me maximally integer|floating (but better just float) and targets
     # should only be bool, nothing else. The rest is the job of the calling code.
     return qvalues_from_counts(scores, targets, is_tdc=True, desc=desc)
-
-
-@typechecked
-def qvalues_from_scores(
-    scores: np.ndarray[float],
-    targets: np.ndarray[bool],
-    qvalue_algorithm: str = "tdc",
-):
-    """Compute q-values from scores.
-
-    Parameters
-    ----------
-    scores:
-        A numpy array containing the scores for each target and decoy peptide.
-    targets:
-        A boolean array indicating whether each peptide is a target (True) or a
-        decoy (False).
-    qvalue_algorithm:
-        The q-value calculation algorithm to use. Defaults to 'tdc' (mokapot
-        builtin).
-
-    Returns
-    -------
-    array:
-        The q-values calculated using the specified algorithm.
-
-    Raises
-    ------
-    ValueError
-        If the specified algorithm is unknown.
-    """
-    qvalue_function = QVALUE_ALGORITHM[qvalue_algorithm]
-    if qvalue_function is not None:
-        return qvalue_function(scores, targets)
-    else:
-        raise ValueError(
-            "Unknown qvalue algorithm in qvalues_from_scores:" f" {qvalue_algorithm}"
-        )
 
 
 @typechecked
