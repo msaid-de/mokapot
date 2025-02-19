@@ -316,6 +316,7 @@ def create_config_parser():
             "default",
             "ratio",
             "slope",
+            "fixed",
             "storey_smoother",
             "storey_fixed",
             "storey_bootstrap",
@@ -325,10 +326,21 @@ def create_config_parser():
 
     parser.add_argument(
         "--pi0_eval_lambda",
+        type=float,
         default=0.5,
         help=(
             "Specify the lambda in Storey's pi0 estimation for evaluation "
             "(works currently only with storey_* pi0 algorithms."
+        ),
+    )
+
+    parser.add_argument(
+        "--pi0_value",
+        type=float,
+        default=1.0,
+        help=(
+            "Specify a fixed value for pi0. This has only an effect if the "
+            "pi0_algorithm is set to 'fixed'"
         ),
     )
 

@@ -101,6 +101,20 @@ class SlopePi0Algorithm(Pi0EstAlgorithm):
         )
 
 
+@typechecked
+class FixedPi0(Pi0EstAlgorithm):
+    """Not really an estimation algorithm, but just returning a fixed pi0."""
+
+    def __init__(self, pi0: float):
+        self.pi0 = pi0
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
+        return self.pi0
+
+    def long_desc(self):
+        return f"fixed_pi0({self.pi0})"
+
+
 ## Algorithms for qvalue computation
 @typechecked
 class QvalueAlgorithm(ABC):
@@ -197,6 +211,8 @@ def configure_algorithms(config):
             pi0_algorithm = StoreyPi0Algorithm("smoother", config.pi0_eval_lambda)
         case ("slope", _):
             pi0_algorithm = SlopePi0Algorithm()
+        case ("fixed", _):
+            pi0_algorithm = FixedPi0(config.pi0_value)
         case _:
             raise NotImplementedError
     Pi0EstAlgorithm.set_algorithm(pi0_algorithm)
