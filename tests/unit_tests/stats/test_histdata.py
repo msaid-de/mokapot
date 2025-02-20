@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from _pytest.python_api import approx
+from pytest import approx
 from typeguard import TypeCheckError
 
 from mokapot.stats.histdata import (

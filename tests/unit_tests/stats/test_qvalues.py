@@ -2,16 +2,20 @@
 These tests verify that our q-value calculations are correct.
 """
 
+import json
+
 import numpy as np
 import pytest
 from scipy import stats
 
 from mokapot.stats.histdata import hist_data_from_scores, TDHistData
 from mokapot.stats.peps import peps_from_scores_hist_nnls
+from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.qvalues import (
     qvalues_from_counts,
     qvalues_from_counts_tdc,
     qvalues_from_peps,
+    qvalues_from_pvalues,
     qvalues_from_storeys_algo,
     qvalues_func_from_hist,
 )
@@ -244,3 +248,16 @@ def test_qvalues_discrete(rand_scores):
 
     qvals_st2 = qvalues_from_storeys_algo(scores, targets, pvalue_method="storey")
     np.testing.assert_allclose(qvals_st2, qvals_tdc, atol=0.1)
+
+
+def test_qvalues_storey():
+    with open("data/hedenfalk.json", "r") as file:
+        data = json.load(file)
+    pvals = np.array(data["pvalues"])
+    qvals_expect = np.array(data["qvalues"])
+
+    pi0est = pi0_from_pvalues_storey(
+        pvals, method="bootstrap", lambdas=np.arange(0.05, 1, 0.05)
+    )
+    qvals = qvalues_from_pvalues(pvals, pi0=pi0est.pi0)
+    np.testing.assert_almost_equal(qvals, qvals_expect)

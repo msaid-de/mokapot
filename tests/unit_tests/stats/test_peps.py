@@ -6,6 +6,7 @@ import mokapot.stats.peps as peps
 
 
 def get_target_decoy_data():
+    # todo: should use tdmodel
     N = 5000
     pi0 = 0.7
     R0 = stats.norm(loc=-4, scale=2)

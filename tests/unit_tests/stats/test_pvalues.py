@@ -1,11 +1,6 @@
-import json
-
 import numpy as np
-from pytest import approx
 
-from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.pvalues import empirical_pvalues
-from mokapot.stats.qvalues import qvalues_from_pvalues
 
 
 def test_empirical_pvalues():
@@ -79,55 +74,3 @@ def test_empirical_pvalues_repetitions():
     assert np.all(np.diff(p[s == 25]) == 0)
     p = empirical_pvalues(s, s0, mode="storey")
     assert np.all(np.diff(p[s == 25]) == 0)
-
-
-def test_estimate_pi0_from_R():
-    # Compare against Storey's method with the Hedenfalk data.
-
-    # with open("data/samples.json", "r") as file:
-    with open("data/hedenfalk.json", "r") as file:
-        data = json.load(file)
-    targets = np.array(data["stat"])
-    decoys = np.array(data["stat0"])
-
-    # Preliminary check that pvalues match
-    # Note: A not so slight problem is, that there is an issue with the empPVals
-    # function in the qvalue package when some target and decoy scores are
-    # identical, which can become a major problem for discrete features. This
-    # needed to be fixed which is why some of the results here differ a bit more.
-    pvalues = empirical_pvalues(targets, decoys, mode="storey")
-    pvals_exp = np.array(data["pvalues"])
-    np.testing.assert_allclose(pvalues, pvals_exp, atol=5e-6)
-
-    # Compute pi0 with bootstrap method
-    lambdas = np.arange(0.05, 1, 0.05)
-    pi0est = pi0_from_pvalues_storey(pvalues, method="bootstrap", lambdas=lambdas)
-    assert pi0est.pi0 == approx(0.6763407)
-    assert pi0est.mse is not None
-    assert pi0est.pi0s_raw[np.argmin(pi0est.mse)] == pi0est.pi0
-
-    # Compute pi0 by smoothing (the comparison value is from the qvalue package
-    # in R, since the smoothing method is different the difference is relatively
-    # large)
-    lambdas = np.arange(0.2, 0.95, 0.01)
-    pi0est = pi0_from_pvalues_storey(pvalues, lambdas=lambdas, eval_lambda=0.8)
-    assert pi0est.pi0 == approx(0.6931328, abs=0.01)
-
-    # Compute pi0 with fixed lambda
-    pi0est = pi0_from_pvalues_storey(pvalues, method="fixed", eval_lambda=0.7)
-    assert pi0est.pi0 == approx(0.701367)
-    pi0est = pi0_from_pvalues_storey(pvalues, method="fixed", eval_lambda=0.3)
-    assert pi0est.pi0 == approx(0.7138351)
-
-
-def test_qvalues_storey():
-    with open("data/hedenfalk.json", "r") as file:
-        data = json.load(file)
-    pvals = np.array(data["pvalues"])
-    qvals_expect = np.array(data["qvalues"])
-
-    pi0est = pi0_from_pvalues_storey(
-        pvals, method="bootstrap", lambdas=np.arange(0.05, 1, 0.05)
-    )
-    qvals = qvalues_from_pvalues(pvals, pi0=pi0est.pi0)
-    np.testing.assert_almost_equal(qvals, qvals_expect)

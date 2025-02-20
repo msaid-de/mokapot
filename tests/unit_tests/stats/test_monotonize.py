@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
-from _pytest.python_api import approx
 from numpy import testing as testing
+from pytest import approx
 
 from mokapot.stats.monotonize import (
     fit_nnls,
