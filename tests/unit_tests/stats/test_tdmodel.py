@@ -102,6 +102,6 @@ def test_tdmodel(discrete, is_tdc, rho0):
         # sufficiently many decoys or false targets (the 100 and the maximum
         # relative deviation 0.2 is just some heuristic that seems to work)
         assert (x1 == x2).all()
-        d = abs(y1 - y2) / (y1 + y2)
+        d = abs(y1 - y2) / np.maximum(y1 + y2, 1.0)
         d = d[(y1 + y2) > 100]
         assert (d < 0.2).all()

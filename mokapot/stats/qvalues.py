@@ -10,8 +10,8 @@ from typeguard import typechecked
 import mokapot.stats.pi0est
 import mokapot.stats.pvalues as pvalues
 from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.monotonize import monotonize_simple
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope, pi0_from_pvalues_storey
-from mokapot.stats.utils import monotonize_simple
 
 
 @typechecked

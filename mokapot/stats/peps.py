@@ -8,12 +8,9 @@ from triqler import qvality
 from typeguard import typechecked
 
 from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.monotonize import fit_nnls, monotonize_nnls
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope
-from mokapot.stats.utils import (
-    fit_nnls,
-    monotonize_nnls,
-    pdfs_from_scores,
-)
+from mokapot.stats.utils import pdfs_from_scores
 
 LOGGER = logging.getLogger(__name__)
 

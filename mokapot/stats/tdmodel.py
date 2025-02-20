@@ -264,14 +264,14 @@ class TDModel(ABC):
             assert np.unique(x).size == x.size
             return sum(f)
         else:
-            return sp.integrate.trapz(f, x)
+            return sp.integrate.trapezoid(f, x)
 
     def _integrate1(self, F1, f1, f, x):
         if self.is_discrete:
             assert np.unique(x).size == x.size
             return sum((F1 - f1 / 2) * f)
         else:
-            return sp.integrate.trapz(F1 * f, x)
+            return sp.integrate.trapezoid(F1 * f, x)
 
     def _integrate2(self, F1, f1, F2, f2, f, x):
         if self.is_discrete:
@@ -283,7 +283,7 @@ class TDModel(ABC):
             assert np.unique(x).size == x.size
             return sum((F1 * F2 - (f1 * F2 + F1 * f2) / 2 + f1 * f2 / 3) * f)
         else:
-            return sp.integrate.trapz(F1 * F2 * f, x)
+            return sp.integrate.trapezoid(F1 * F2 * f, x)
 
     def _get_input_pdfs_and_cdfs(self, x):
         rho0 = self.rho0
