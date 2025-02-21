@@ -19,7 +19,6 @@ from typeguard import typechecked
 import mokapot.stats.pi0est as pi0est
 import mokapot.stats.pvalues as pvalues
 import mokapot.stats.qvalues as qvalues
-from mokapot.stats.histdata import hist_data_from_scores
 
 LOGGER = logging.getLogger(__name__)
 
@@ -87,11 +86,8 @@ class SlopePi0Algorithm(Pi0EstAlgorithm):
         self.slope_threshold = slope_threshold
 
     def estimate(self, scores, targets):
-        hist_data = hist_data_from_scores(scores, targets, bins=self.bins)
-        hist_data.as_densities()
-        _, target_density, decoy_density = hist_data.as_densities()
-        return pi0est.pi0_from_pdfs_by_slope(
-            target_density, decoy_density, threshold=self.slope_threshold
+        return pi0est.pi0est_from_scores_by_slope(
+            scores, targets, bins=self.bins, slope_threshold=self.slope_threshold
         )
 
     def long_desc(self):

@@ -265,7 +265,7 @@ class TDHistData:
 def hist_data_from_scores(
     scores: np.ndarray[float],
     targets: np.ndarray[bool],
-    bins: np.ndarray[float] | str | None = None,
+    bins: np.ndarray[float] | int | str | None = None,
 ) -> TDHistData:
     """Generate histogram data from scores and target/decoy information.
 

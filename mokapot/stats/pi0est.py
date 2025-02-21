@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 from collections import namedtuple
-from logging import warning
+from typing import Literal
 
 import numpy as np
 import scipy as sp
 from typeguard import typechecked
+
+from mokapot.stats.histdata import hist_data_from_scores
+
+LOGGER = logging.getLogger(__name__)
 
 Pi0EstStorey = namedtuple(
     "Pi0Est", ["pi0", "pi0s_smooth", "pi0s_raw", "lambdas", "mse"]
@@ -16,7 +21,7 @@ Pi0EstStorey = namedtuple(
 def pi0_from_pvalues_storey(
     pvals: np.ndarray[float],
     *,
-    method: str = "smoother",
+    method: Literal["smoother", "bootstrap", "fixed"],
     lambdas: np.ndarray[float] = np.arange(0.2, 0.8, 0.01),
     eval_lambda: float = 0.5,
 ) -> Pi0EstStorey:
@@ -64,7 +69,7 @@ def pi0_from_pvalues_storey(
     assert len(lambdas) >= 4
 
     if max(pvals) < max(lambdas):
-        warning(
+        LOGGER.warning(
             f"The maximum p-value ({max(pvals)}) should be larger than the "
             f"maximum lambda ({max(lambdas)})"
         )
@@ -138,6 +143,27 @@ def pi0_from_pdfs_by_slope(
     except RuntimeError:
         return 1.0
     return np.clip(pi0_est, 1e-10, 1.0)
+
+
+def pi0est_from_scores_by_slope(scores, targets, bins, slope_threshold):
+    hist_data = hist_data_from_scores(scores, targets, bins=bins)
+    hist_data.as_densities()
+    _, target_density, decoy_density = hist_data.as_densities()
+    return pi0_from_pdfs_by_slope(
+        target_density, decoy_density, threshold=slope_threshold
+    )
+
+
+def pi0est_from_counts(scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
+    targets_count = targets.sum()
+    decoys_count = (~targets).sum()
+    if decoys_count == 0:
+        LOGGER.warning(
+            f"Can't estimate pi0 with zero decoys (targets={targets_count}, "
+            f"decoys={decoys_count}, total={len(targets)})"
+        )
+    decoy_target_ratio = decoys_count / targets_count
+    return decoy_target_ratio
 
 
 @typechecked
