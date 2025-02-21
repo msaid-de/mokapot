@@ -1,9 +1,8 @@
 import numpy as np
 import pytest
-import scipy as sp
 from numpy.ma.core import allclose
 
-from mokapot.stats.tdmodel import STDSModel, TDCModel
+from .helpers import create_tdmodel
 
 
 def bernoulli_zscore(n1, k1, n2, k2):
@@ -19,18 +18,7 @@ def bernoulli_zscore(n1, k1, n2, k2):
 @pytest.mark.parametrize("is_tdc", [False, True])
 def test_tdmodel(discrete, is_tdc, rho0):
     N = 1000000
-    np.random.seed(123)
-    if discrete:
-        R1 = sp.stats.binom(10, 0.7)
-        R0 = sp.stats.binom(8, 0.3)
-    else:
-        R1 = sp.stats.norm(0, 1)
-        R0 = sp.stats.norm(-1, 1)
-
-    if is_tdc:
-        model = TDCModel(R0, R1, rho0)
-    else:
-        model = STDSModel(R0, R1, rho0)
+    model = create_tdmodel(is_tdc, rho0, discrete)
 
     scores, targets, is_fd = model.sample_scores(N)
 

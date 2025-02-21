@@ -1,6 +1,8 @@
 import numpy as np
+import pytest
 
 from mokapot.stats.pvalues import empirical_pvalues
+from unit_tests.stats.helpers import create_tdmodel
 
 
 def test_empirical_pvalues():
@@ -74,3 +76,28 @@ def test_empirical_pvalues_repetitions():
     assert np.all(np.diff(p[s == 25]) == 0)
     p = empirical_pvalues(s, s0, mode="storey")
     assert np.all(np.diff(p[s == 25]) == 0)
+
+
+@pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
+@pytest.mark.parametrize("discrete", [False, True])
+@pytest.mark.parametrize("is_tdc", [False])
+def test_empirical_pvalues_on_tdmodel(discrete, is_tdc, rho0):
+    N = 1000000
+    model = create_tdmodel(is_tdc, rho0, discrete)
+    scores, targets, is_fd = model.sample_scores(N)
+    stat = scores[targets]
+    stat0 = scores[~targets]
+    pvalues = empirical_pvalues(stat, stat0)
+
+    if is_tdc:
+        # todo: come up with a formula to compute p-values more or less
+        #   analytically for tdc (not soo easy, as the pdf is given by
+        #   const. * F_X(s) * F_Y(s) * f_Y(s) which is we would need to integrate
+        #   again with special treatment for discrete distributions)
+        #   Maybe: numerical integration plus some in between interpolation
+        raise NotImplementedError()
+    else:
+        # negative offset needed as a hack for discrete distributions
+        pvalues_expect = 1 - model.decoy_cdf(stat - 1e-10)
+
+    np.testing.assert_allclose(pvalues, pvalues_expect, atol=1e-3)
