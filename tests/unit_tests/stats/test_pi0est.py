@@ -1,7 +1,7 @@
 import json
 
 import numpy as np
-from _pytest.python_api import approx
+from pytest import approx
 
 from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.pvalues import empirical_pvalues

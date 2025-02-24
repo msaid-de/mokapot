@@ -3,7 +3,7 @@ import pytest
 import scipy as sp
 
 from mokapot.stats.pvalues import empirical_pvalues
-from unit_tests.stats.helpers import create_tdmodel
+from .helpers import create_tdmodel
 
 
 def test_empirical_pvalues():

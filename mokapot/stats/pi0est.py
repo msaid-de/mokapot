@@ -21,7 +21,7 @@ Pi0EstStorey = namedtuple(
 def pi0_from_pvalues_storey(
     pvals: np.ndarray[float],
     *,
-    method: Literal["smoother", "bootstrap", "fixed"],
+    method: Literal["smoother", "bootstrap", "fixed"] = "smoother",
     lambdas: np.ndarray[float] = np.arange(0.2, 0.8, 0.01),
     eval_lambda: float = 0.5,
 ) -> Pi0EstStorey:
@@ -35,7 +35,7 @@ def pi0_from_pvalues_storey(
         estimated.
     method : str, optional
         The method used for smoothing ('smoother' or 'bootstrap'). Default is
-        'smoother'. ('bootstrap' is not yet implemented).
+        'smoother'.
     lambdas : np.ndarray, optional
         An array of lambda values used to estimate pi0. Default is an array
         from 0.05 to 0.95 with step 0.05.
