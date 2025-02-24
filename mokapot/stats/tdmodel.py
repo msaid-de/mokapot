@@ -323,6 +323,11 @@ class TDModel(ABC):
     def approx_pi0(self):
         pass
 
+    def pi0_from_data(self, targets: np.ndarray[bool], is_fd: np.ndarray[bool]):
+        num_targets = targets.sum()
+        num_false_targets = (targets & is_fd).sum()
+        return num_false_targets / num_targets
+
 
 @typechecked
 class TDCModel(TDModel):

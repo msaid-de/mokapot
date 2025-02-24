@@ -9,12 +9,29 @@ import scipy as sp
 from typeguard import typechecked
 
 from mokapot.stats.histdata import hist_data_from_scores
+from mokapot.stats.pvalues import empirical_pvalues
 
 LOGGER = logging.getLogger(__name__)
 
 Pi0EstStorey = namedtuple(
     "Pi0Est", ["pi0", "pi0s_smooth", "pi0s_raw", "lambdas", "mse"]
 )
+
+
+@typechecked
+def pi0_from_scores_storey(
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
+    *,
+    method: Literal["smoother", "bootstrap", "fixed"] = "smoother",
+    lambdas: np.ndarray[float] = np.arange(0.2, 0.8, 0.01),
+    eval_lambda: float = 0.5,
+) -> float:
+    pvalues = empirical_pvalues(scores[targets], scores[~targets])
+    pi0est = pi0_from_pvalues_storey(
+        pvalues, method=method, lambdas=lambdas, eval_lambda=eval_lambda
+    )
+    return pi0est.pi0
 
 
 @typechecked
