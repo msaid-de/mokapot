@@ -9,7 +9,7 @@ from typeguard import typechecked
 # This file (class) is only for checking validity of TD modelling assumptions.
 
 
-class RandomVar(typing.Protocol):
+class RandomVarBase(typing.Protocol):
     """Interface definition for random variables."""
 
     def rvs(self, N: int) -> int: ...
@@ -17,8 +17,20 @@ class RandomVar(typing.Protocol):
     def sf(self, x: float | np.ndarray[float]) -> float: ...
 
 
+class RandomVarContinuous(RandomVarBase, typing.Protocol):
+    def pdf(self, x: float | np.ndarray[float]) -> float: ...
+
+
+class RandomVarDiscrete(RandomVarBase, typing.Protocol):
+    def pmf(self, x: float | np.ndarray[float]) -> float: ...
+
+
+RandomVar = RandomVarContinuous | RandomVarDiscrete
+
+
 @typechecked
-def set_mu_std(dist: sp.stats.rv_continuous, mu: float, std: float):
+def set_mu_std(dist: RandomVarBase, mu: float, std: float):
+    # def set_mu_std(dist: RandomVarContinuous, mu: float, std: float):
     """Modifies distribution parameters to have specified mean and standard
     deviation.
 
@@ -39,18 +51,19 @@ def set_mu_std(dist: sp.stats.rv_continuous, mu: float, std: float):
     dist
         The distribution object with updated mean and standard deviation.
     """
+    args = dist.args
     kwds = dist.kwds
     kwds["loc"] = 0
     kwds["scale"] = 1
-    rv0 = dist.dist(**kwds)
+    rv0 = dist.dist(*args, **kwds)
     kwds["scale"] = std / rv0.std()
-    rv1 = dist.dist(**kwds)
+    rv1 = dist.dist(*args, **kwds)
     kwds["loc"] = mu - rv1.mean()
-    return dist.dist(**kwds)
+    return dist.dist(*args, **kwds)
 
 
 @typechecked
-def set_support(dist, lower: float, upper: float):
+def set_support(dist: RandomVarContinuous, lower: float, upper: float):
     """Modifies distribution object to have fixed support.
 
     Note: the input distribution must have finite support already.
@@ -338,7 +351,7 @@ class TDCModel(TDModel):
         return self.approx_fdr_and_dp()[0]
 
     def get_sampling_pdfs(self, x):
-        DP, FDR = self.approx_fdr_and_dp()
+        FDR, DP = self.approx_fdr_and_dp()
         X_pdf, X_cdf, Y_pdf, Y_cdf = self._get_input_pdfs_and_cdfs(x)
 
         T_pdf = (X_pdf * Y_cdf**2 + X_cdf * Y_cdf * Y_pdf) / (1 - DP)

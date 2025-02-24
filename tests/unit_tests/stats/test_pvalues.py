@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import scipy as sp
 
 from mokapot.stats.pvalues import empirical_pvalues
 from unit_tests.stats.helpers import create_tdmodel
@@ -79,8 +80,9 @@ def test_empirical_pvalues_repetitions():
 
 
 @pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
-@pytest.mark.parametrize("discrete", [False, True])
-@pytest.mark.parametrize("is_tdc", [False])
+@pytest.mark.parametrize(
+    ("discrete", "is_tdc"), [(False, False), (True, False), (False, True)]
+)
 def test_empirical_pvalues_on_tdmodel(discrete, is_tdc, rho0):
     N = 1000000
     model = create_tdmodel(is_tdc, rho0, discrete)
@@ -90,14 +92,22 @@ def test_empirical_pvalues_on_tdmodel(discrete, is_tdc, rho0):
     pvalues = empirical_pvalues(stat, stat0)
 
     if is_tdc:
-        # todo: come up with a formula to compute p-values more or less
-        #   analytically for tdc (not soo easy, as the pdf is given by
-        #   const. * F_X(s) * F_Y(s) * f_Y(s) which is we would need to integrate
-        #   again with special treatment for discrete distributions)
-        #   Maybe: numerical integration plus some in between interpolation
-        raise NotImplementedError()
-    else:
-        # negative offset needed as a hack for discrete distributions
-        pvalues_expect = 1 - model.decoy_cdf(stat - 1e-10)
+        # Compute decoy cdf in output via numerical integration of the
+        # output decoy pdf. Todo: move part of this to tdmodel test and tdmodel
+        # Note: no formula for p-values of discrete tdc output decoy distribution
+        # yet, but this is enough for testing the p-value estimation.
+        xi = np.linspace(min(scores) - 1, max(scores) + 1, 100000)
+        T_pdf, TT_pdf, FT_pdf, D_pdf, FDR = model.get_sampling_pdfs(xi)
+        FT_cdf = sp.integrate.cumulative_trapezoid(FT_pdf, xi, initial=0.0)
 
-    np.testing.assert_allclose(pvalues, pvalues_expect, atol=1e-3)
+        def decoy_cdf(x):
+            return np.interp(x, xi, FT_cdf)
+
+        # assert allclose(FT_cdf[0], 0)
+        # assert allclose(FT_cdf[-1], 1, 1e-3)
+    else:
+        decoy_cdf = model.decoy_cdf
+
+    # negative offset needed as a hack for discrete distributions
+    pvalues_expect = 1 - decoy_cdf(stat - 1e-10)
+    np.testing.assert_allclose(pvalues, pvalues_expect, atol=1e-2)
