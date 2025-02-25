@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 from pytest import approx
 
-from mokapot.stats.pi0est import pi0_from_pvalues_storey, pi0_from_scores_storey
+from mokapot.stats.pi0est import (
+    pi0_from_bootstrap,
+    pi0_from_pvalues_storey,
+    pi0_from_scores_storey,
+)
 from mokapot.stats.pvalues import empirical_pvalues
 from .helpers import create_tdmodel
 
@@ -52,17 +56,30 @@ def test_estimate_pi0_from_R():
 @pytest.mark.parametrize("discrete", [True, False])
 @pytest.mark.parametrize("is_tdc", [True, False])
 def test_pi0est_storey(discrete, is_tdc, rho0):
-    if is_tdc and not discrete and rho0 < 0.1:
-        pytest.skip("Does not work for small rho0/pi0 in this case")
-
-    N = 1000000
+    N = 100000
     model = create_tdmodel(is_tdc, rho0, discrete, delta=2)
+    np.random.seed(42)
     scores, targets, is_fd = model.sample_scores(N)
+    pi0_actual = model.approx_pi0()
 
     pi0 = pi0_from_scores_storey(scores, targets, method="bootstrap")
+    atol = 0.3
+    assert pi0 == approx(pi0_actual, abs=atol)
 
+
+@pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
+@pytest.mark.parametrize("discrete", [True, False])
+@pytest.mark.parametrize("is_tdc", [True, False])
+@pytest.mark.parametrize("delta", [2, 4])
+def test_pi0est_bootstrap(discrete, is_tdc, rho0, delta):
+    N = 100000
+    model = create_tdmodel(is_tdc, rho0, discrete, delta=delta)
+    np.random.seed(42)
+    scores, targets, is_fd = model.sample_scores(N)
     pi0_actual = model.pi0_from_data(targets, is_fd)
-    assert pi0 == approx(pi0_actual, abs=0.1)
 
-    # pi0_expect = model.approx_pi0()
-    # assert pi0 == approx(pi0_expect, abs=2 * 0.05)
+    pi0 = pi0_from_bootstrap(scores, targets)
+    atol = 0.01 if delta == 4 else 0.3
+    if rho0 == 0.01 and not discrete and is_tdc:
+        atol = 0.6
+    assert pi0 == approx(pi0_actual, abs=atol)

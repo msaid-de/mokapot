@@ -27,6 +27,38 @@ def pi0_from_scores_storey(
     lambdas: np.ndarray[float] = np.arange(0.2, 0.8, 0.01),
     eval_lambda: float = 0.5,
 ) -> float:
+    """
+    Estimate the proportion of true null hypotheses (pi0) from the input scores and
+    targets using Storey's method. The method computes empirical p-values for the
+    given scores and derives the proportion of true null hypotheses based on the
+    provided parameters. It supports smoothing, bootstrap, and fixed methods for
+    calculation.
+
+    Parameters
+    ----------
+    scores:
+        Array of score values, where each score corresponds to a hypothesis test.
+    targets:
+        Boolean array indicating which scores correspond to the hypothesized
+        signal values (true) and which correspond to the background or
+        null hypothesis (false).
+    method:
+        Method used to estimate pi0. Options include "smoother" for smoothed
+        estimation, "bootstrap" for bootstrap-based estimation, and "fixed" for a
+        pre-defined estimate. Default is "smoother".
+    lambdas:
+        Array of lambda values used for tuning and smoothing purposes.
+        Default values range from 0.2 to 0.8 with a step size of 0.01.
+    eval_lambda:
+        The lambda value at which to evaluate pi0. Default is 0.5.
+
+    Returns
+    -------
+    float
+        The estimated pi0 value, representing the proportion of true null
+        hypotheses.
+
+    """
     pvalues = empirical_pvalues(scores[targets], scores[~targets])
     pi0est = pi0_from_pvalues_storey(
         pvalues, method=method, lambdas=lambdas, eval_lambda=eval_lambda
@@ -47,15 +79,18 @@ def pi0_from_pvalues_storey(
 
     Parameters
     ----------
-    pvals : np.ndarray[float]
+    pvals:
         Array of p-values for which the proportion of null hypotheses (pi0) is
         estimated.
-    method : str, optional
+    method:
         The method used for smoothing ('smoother' or 'bootstrap'). Default is
         'smoother'.
-    lambdas : np.ndarray, optional
+    lambdas:
         An array of lambda values used to estimate pi0. Default is an array
-        from 0.05 to 0.95 with step 0.05.
+        from 0.05 to 0.95 with step 0.05. For the meaning of lambda and eval_lambda
+        please the the paper [1].
+    eval_lambda:
+        A value of lambda used to evaluate pi0. Default is 0.5.
 
     Returns
     -------
@@ -162,7 +197,48 @@ def pi0_from_pdfs_by_slope(
     return np.clip(pi0_est, 1e-10, 1.0)
 
 
-def pi0est_from_scores_by_slope(scores, targets, bins, slope_threshold):
+@typechecked
+def pi0est_from_scores_by_slope(
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
+    bins: np.ndarray[float] | int | str | None,
+    slope_threshold: float = 0.9,
+):
+    """
+    Estimates the proportion of false positives (pi0) in a given set of scores and
+    targets by analyzing the slope of the density functions derived from the score
+    distribution.
+
+    This function computes histograms for the provided scores with respect to their
+    target and decoy classifications, estimates the density functions, and calculates
+    the proportion of null hypotheses (pi0) based on the slope of these densities.
+
+    Parameters
+    ----------
+    scores:
+        A collection of numeric scores representing the statistical significance or
+        other measures associated with some experiment or process.
+
+    targets:
+        A binary array or collection where each value indicates whether a
+        corresponding score is from the target or decoy class.
+
+    bins:
+        The number of histogram bins to use or the specific bin edges to divide
+        the scores into.
+
+    slope_threshold:
+        A threshold value for the slope used to determine the proportion of null
+        hypotheses (pi0) from the density estimates of the target and decoy
+        distributions.
+
+    Returns
+    -------
+    float
+        The estimated proportion of null hypotheses (pi0) based on the provided
+        scores, targets, and density slope threshold.
+
+    """
     hist_data = hist_data_from_scores(scores, targets, bins=bins)
     hist_data.as_densities()
     _, target_density, decoy_density = hist_data.as_densities()
@@ -172,6 +248,30 @@ def pi0est_from_scores_by_slope(scores, targets, bins, slope_threshold):
 
 
 def pi0est_from_counts(scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
+    """
+    Estimates the proportion of null (decoy) elements relative to the non-null
+    (target) elements based on their counts. The function calculates the ratio
+    of decoys to targets in the given dataset. If the count of decoys is zero,
+    a warning is logged, and the ratio cannot be meaningfully estimated.
+
+    Parameters
+    ----------
+    scores : np.ndarray[float]
+        An array representing the scores of the elements. This input is not
+        directly utilized in the current implementation but assumed to align
+        element-wise with the `targets` array.
+
+    targets : np.ndarray[bool]
+        A boolean array indicating whether each element in the dataset is a
+        target (True) or a decoy (False). The size of `targets` must match
+        the size of `scores`.
+
+    Returns
+    -------
+    float
+        The calculated estimate of the decoy-to-target ratio. If no decoys
+        are present, the ratio may not provide meaningful information.
+    """
     targets_count = targets.sum()
     decoys_count = (~targets).sum()
     if decoys_count == 0:
@@ -215,3 +315,39 @@ def count_larger(pvals, lambdas):
     hist_counts, _ = np.histogram(pvals, bins=bin_edges)
     cumulative_counts = np.cumsum(hist_counts[::-1])[::-1]
     return cumulative_counts
+
+
+@typechecked
+def pi0_from_bootstrap(
+    scores: np.ndarray[float], targets: np.ndarray[bool], N: int = 100000
+) -> float:
+    """
+    Estimates the proportion of true null hypotheses (pi0) using bootstrapping.
+
+    This function calculates an estimate of pi0, the proportion of true null
+    hypotheses, based on bootstrap sampling. It takes as input an array of
+    scores, a boolean array indicating target values, and an optional number
+    of samples for the bootstrapping process. By performing resampling and
+    comparing scores between target true and target false groups, the function
+    computes a value proportional to the likelihood of scores from true null
+    hypothesis cases.
+
+    Parameters
+    ----------
+    scores : np.ndarray[float]
+        Array of scores corresponding to the data points.
+    targets : np.ndarray[bool]
+        Boolean array where True represents the target class, and False
+        represents the non-target class.
+    N : int, optional
+        The number of samples to be drawn for bootstrapping. The default is
+        100000.
+
+    Returns
+    -------
+    float
+        An estimate of the proportion of true null hypotheses (pi0).
+    """
+    A = np.random.choice(scores[targets], size=N, replace=True)
+    B = np.random.choice(scores[~targets], size=N, replace=True)
+    return 2 * (sum(B > A) + 0.5 * sum(B == A)) / N
