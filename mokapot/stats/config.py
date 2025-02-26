@@ -39,11 +39,15 @@ def add_config_args(parser: argparse.ArgumentParser):
             "ratio",
             "slope",
             "fixed",
+            "bootstrap",
             "storey_smoother",
             "storey_fixed",
             "storey_bootstrap",
         ],
-        help=("Specify the algorithm for pi0 estimation. "),
+        help=(
+            "Specify the algorithm for pi0 estimation. The default is 'ratio' for "
+            "tdc and 'bootstrap' for otherwise."
+        ),
     )
 
     parser.add_argument(
@@ -69,11 +73,11 @@ def add_config_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--qvalue_algorithm",
         default="default",
-        choices=["default", "tdc", "from_counts", "storey"],
+        choices=["default", "from_counts", "storey"],
         help=(
-            "Specify the algorithm for qvalue computation. If the `tdc` option"
-            "is set to true (which is the default0 `default` evals to `tdc`, "
-            "the original mokapot algorithm, which works only with tdc. "
+            "Specify the algorithm for qvalue computation. If the `--tdc` option"
+            "is set to true (which is the default, `default` evals to `from_counts`, "
+            "equivalent to the original mokapot algorithm (which works only with tdc). "
             "Otherwise, it defaults to `storey`."
         ),
     )

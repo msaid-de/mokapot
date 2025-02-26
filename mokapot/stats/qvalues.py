@@ -64,6 +64,8 @@ def qvalues_from_counts_tdc(
     # todo: I think the allowed data types are way to general and lenient. scores
     # should me maximally integer|floating (but better just float) and targets
     # should only be bool, nothing else. The rest is the job of the calling code.
+
+    # todo: should be removed and only qvalues_from_counts be used
     return qvalues_from_counts(scores, targets, is_tdc=True, desc=desc)
 
 
@@ -131,6 +133,7 @@ def qvalues_from_counts(
     targets: np.ndarray[bool],
     is_tdc: bool = True,
     desc: bool = True,
+    pi0: float | None = None,
 ):
     r"""
     Compute qvalues from target/decoy counts.
@@ -171,12 +174,16 @@ def qvalues_from_counts(
     if not desc:
         scores = -scores
 
-    if is_tdc:
-        factor = 1
-    else:
-        hist_data = hist_data_from_scores(scores, targets)
-        eval_scores, target_density, decoy_density = hist_data.as_densities()
-        pi0 = pi0_from_pdfs_by_slope(target_density, decoy_density)
+    factor = None
+    if pi0 is None:
+        if is_tdc:
+            factor = 1
+        else:
+            hist_data = hist_data_from_scores(scores, targets)
+            eval_scores, target_density, decoy_density = hist_data.as_densities()
+            pi0 = pi0_from_pdfs_by_slope(target_density, decoy_density)
+
+    if factor is None:
         target_decoy_ratio = targets.sum() / (~targets).sum()
         factor = pi0 * target_decoy_ratio
 

@@ -22,6 +22,8 @@ import mokapot.stats.qvalues as qvalues
 
 LOGGER = logging.getLogger(__name__)
 
+# todo: change ABC to Protocol, and separate singleton from implementations
+
 
 ## Algorithms for pi0 estimation
 class Pi0EstAlgorithm(ABC):
@@ -54,7 +56,7 @@ class TDCPi0Algorithm(Pi0EstAlgorithm):
         decoy_target_ratio = decoys_count / targets_count
         return decoy_target_ratio
 
-    def long_desc(self):
+    def long_desc(self) -> str:
         return "decoy_target_ratio"
 
 
@@ -76,25 +78,38 @@ class StoreyPi0Algorithm(Pi0EstAlgorithm):
         ).pi0
         return pi0
 
-    def long_desc(self):
+    def long_desc(self) -> str:
         return f"storey_pi0(method={self.method}, lambda={self.eval_lambda})"
 
 
+@typechecked
 class SlopePi0Algorithm(Pi0EstAlgorithm):
-    def __init__(self, hist_bins="scott", slope_threshold=0.9):
+    def __init__(self, hist_bins="scott", slope_threshold: float = 0.9):
         self.bins = hist_bins
         self.slope_threshold = slope_threshold
 
-    def estimate(self, scores, targets):
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
         return pi0est.pi0est_from_scores_by_slope(
             scores, targets, bins=self.bins, slope_threshold=self.slope_threshold
         )
 
-    def long_desc(self):
+    def long_desc(self) -> str:
         return (
             f"pi0_by_slope(hist_bins={self.bins}, "
             f"slope_threshold={self.slope_threshold})"
         )
+
+
+@typechecked
+class BootstrapPi0Algorithm(Pi0EstAlgorithm):
+    def __init__(self, N: int = 100000):
+        self.N = N
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
+        return pi0est.pi0_from_bootstrap(scores, targets, self.N)
+
+    def long_desc(self) -> str:
+        return f"pi0_by_bootstrap(N={self.N})"
 
 
 @typechecked
@@ -107,7 +122,7 @@ class FixedPi0(Pi0EstAlgorithm):
     def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> float:
         return self.pi0
 
-    def long_desc(self):
+    def long_desc(self) -> str:
         return f"fixed_pi0({self.pi0})"
 
 
@@ -115,6 +130,16 @@ class FixedPi0(Pi0EstAlgorithm):
 @typechecked
 class QvalueAlgorithm(ABC):
     qvalue_algo = None
+
+    def __init__(self, pi0_algo):
+        self.pi0_algo = pi0_algo
+
+    def estimate_pi0(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        # todo: move into mixin class
+        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
+        pi0 = pi0_algo.estimate(scores, targets)
+        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
+        return pi0
 
     @abstractmethod
     def estimate(self, scores, targets, desc):
@@ -126,25 +151,21 @@ class QvalueAlgorithm(ABC):
 
     @classmethod
     def eval(cls, scores, targets, desc=True):
+        if cls.qvalue_algo is None:
+            raise ValueError("qvalue_algorithm is not set")
         return cls.qvalue_algo.estimate(scores, targets, desc)
 
     @classmethod
     def long_desc(cls):
+        if cls.qvalue_algo is None:
+            raise ValueError("qvalue_algorithm is not set")
         return cls.qvalue_algo.long_desc()
 
 
 @typechecked
-class TDCQvalueAlgorithm(QvalueAlgorithm):
-    def estimate(self, scores, targets, desc):
-        return qvalues.qvalues_from_counts_tdc(scores, targets=targets, desc=desc)
-
-    def long_desc(self):
-        return "mokapot tdc algorithm"
-
-
-@typechecked
 class CountsQvalueAlgorithm(QvalueAlgorithm):
-    def __init__(self, tdc: bool):
+    def __init__(self, tdc: bool, pi0_algo: Pi0EstAlgorithm):
+        super().__init__(pi0_algo)
         self.tdc = tdc
 
     def estimate(
@@ -152,7 +173,8 @@ class CountsQvalueAlgorithm(QvalueAlgorithm):
     ):
         if not desc:
             scores = -scores
-        qvals = qvalues.qvalues_from_counts(scores, targets, is_tdc=self.tdc)
+        pi0 = super().estimate_pi0(scores, targets)
+        qvals = qvalues.qvalues_from_counts(scores, targets, is_tdc=self.tdc, pi0=pi0)
         return qvals
 
     def long_desc(self):
@@ -162,18 +184,15 @@ class CountsQvalueAlgorithm(QvalueAlgorithm):
 @typechecked
 class StoreyQvalueAlgorithm(QvalueAlgorithm):
     def __init__(self, *, pvalue_method="best", pi0_algo=None):
-        super().__init__()
+        super().__init__(pi0_algo)
         self.pvalue_method = pvalue_method
-        self.pi0_algo = pi0_algo
 
     def estimate(
         self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool
     ):
-        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
-        pi0 = pi0_algo.estimate(scores, targets)
-        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
         if not desc:
             scores = -scores
+        pi0 = super().estimate_pi0(scores, targets)
         qvals = qvalues.qvalues_from_storeys_algo(scores, targets, pi0)
         return qvals
 
@@ -190,40 +209,43 @@ class PEPAlgorithm(ABC):
 
 # Configuration of algorithms via command line arguments
 def configure_algorithms(config):
-    tdc = config.tdc
+    is_tdc = config.tdc
 
-    match (config.pi0_algorithm, config.tdc):
-        case ("default", True) | ("ratio", _):
-            if not tdc:
-                raise ValueError(
-                    "Can't use 'ratio' for pi0 estimation, when 'tdc' is false"
-                )
+    pi0_algorithm = config.pi0_algorithm
+    if pi0_algorithm is None or pi0_algorithm == "default":
+        pi0_algorithm = "ratio" if is_tdc else "bootstrap"
+
+    match pi0_algorithm:
+        case "ratio":
+            if not is_tdc:
+                msg = "Can't use 'ratio' for pi0 estimation, when 'tdc' is false"
+                raise ValueError(msg)
             pi0_algorithm = TDCPi0Algorithm()
-        case ("default", False) | ("storey_fixed", _):
-            pi0_algorithm = StoreyPi0Algorithm("fixed", config.pi0_eval_lambda)
-        case ("storey_bootstrap", _):
-            pi0_algorithm = StoreyPi0Algorithm("bootstrap", config.pi0_eval_lambda)
-        case ("storey_smoother", _):
-            pi0_algorithm = StoreyPi0Algorithm("smoother", config.pi0_eval_lambda)
-        case ("slope", _):
+        case "slope":
             pi0_algorithm = SlopePi0Algorithm()
-        case ("fixed", _):
+        case "fixed":
             pi0_algorithm = FixedPi0(config.pi0_value)
+        case "bootstrap":
+            pi0_algorithm = BootstrapPi0Algorithm(config.pi0_value)
+        case "storey_smoother":
+            pi0_algorithm = StoreyPi0Algorithm("smoother", config.pi0_eval_lambda)
+        case "storey_fixed":
+            pi0_algorithm = StoreyPi0Algorithm("fixed", config.pi0_eval_lambda)
+        case "storey_bootstrap":
+            pi0_algorithm = StoreyPi0Algorithm("bootstrap", config.pi0_eval_lambda)
         case _:
             raise NotImplementedError
     Pi0EstAlgorithm.set_algorithm(pi0_algorithm)
 
-    match (config.qvalue_algorithm, config.tdc):
-        case ("default", True) | ("tdc", _):
-            if not tdc:
-                raise ValueError(
-                    "Can't use 'tdc' algorithm for q-values, when 'tdc' is false"
-                )
-            qvalue_algorithm = TDCQvalueAlgorithm()
-        case ("default", False) | ("storey", _):
-            qvalue_algorithm = StoreyQvalueAlgorithm()
-        case ("from_counts", _):
-            qvalue_algorithm = CountsQvalueAlgorithm(tdc)
+    qvalue_algorithm = config.qvalue_algorithm
+    if qvalue_algorithm is None or qvalue_algorithm == "default":
+        qvalue_algorithm = "from_counts" if is_tdc else "storey"
+
+    match qvalue_algorithm:
+        case "from_counts":
+            qvalue_algorithm = CountsQvalueAlgorithm(is_tdc, pi0_algo=pi0_algorithm)
+        case "storey":
+            qvalue_algorithm = StoreyQvalueAlgorithm(pi0_algo=pi0_algorithm)
         case _:
             raise NotImplementedError
     QvalueAlgorithm.set_algorithm(qvalue_algorithm)
@@ -232,4 +254,4 @@ def configure_algorithms(config):
     LOGGER.debug(f"q-value algorithm: {qvalue_algorithm.long_desc()}")
 
 
-QvalueAlgorithm.set_algorithm(TDCQvalueAlgorithm())
+QvalueAlgorithm.set_algorithm(CountsQvalueAlgorithm(True, TDCPi0Algorithm()))
