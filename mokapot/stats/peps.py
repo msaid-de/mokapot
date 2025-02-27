@@ -85,6 +85,7 @@ def peps_from_scores_qvality(
     targets: np.ndarray[bool],
     is_tdc: bool,
     use_binary: bool = False,
+    pi0: float | None = None,
 ) -> np.ndarray[float]:
     """Compute PEPs from scores using the triqler pep algorithm.
 
@@ -110,11 +111,6 @@ def peps_from_scores_qvality(
         the provided scores and targets, and are returned in the same order as
         the targets array.
     """
-    qvalues_from_scores = (
-        qvality.getQvaluesFromScoresQvality
-        if use_binary
-        else qvality.getQvaluesFromScores
-    )
 
     # Triqler returns the peps for reverse sorted scores, so we sort the scores
     # ourselves and later sort them back
@@ -123,15 +119,19 @@ def peps_from_scores_qvality(
 
     try:
         old_verbosity, qvality.VERB = qvality.VERB, 0
-        _, peps_sorted = qvalues_from_scores(
-            scores_sorted[targets_sorted],
-            scores_sorted[~targets_sorted],
-            includeDecoys=True,
-            includePEPs=True,
-            tdcInput=is_tdc,
-        )
+        target_scores = scores_sorted[targets_sorted]
+        decoy_scores = scores_sorted[~targets_sorted]
+        args = [target_scores, decoy_scores]
+        kwargs = dict(includeDecoys=True, includePEPs=True, tdcInput=is_tdc)
         if use_binary:
+            if pi0 is not None:
+                raise ValueError("Cannot use `use_binary` with `pi0`")
+            _, peps_sorted = qvality.getQvaluesFromScoresQvality(*args, **kwargs)
             peps_sorted = np.array(peps_sorted, dtype=float)
+        else:
+            # includePEPs is ignored in triqler, tdcInput also
+            pi0 = 1.0 if pi0 is None else pi0
+            _, peps_sorted = qvality.getQvaluesFromScores(*args, **kwargs, pi0=pi0)
 
         inverse_idx = np.argsort(index)
         peps = peps_sorted[inverse_idx]
@@ -150,9 +150,9 @@ def peps_from_scores_qvality(
 def peps_from_scores_kde_nnls(
     scores: np.ndarray[float],
     targets: np.ndarray[bool],
-    is_tdc: bool,
+    pi0: float | None = None,
+    *,
     num_eval_scores: int = 500,
-    pi0_estimation_threshold: float = 0.9,
 ) -> np.ndarray[float]:
     """Estimate peps from scores using density estimates and monotonicity.
 
@@ -203,13 +203,11 @@ def peps_from_scores_kde_nnls(
         scores, targets, num_eval_scores
     )
 
-    if is_tdc:
-        factor = (~targets).sum() / targets.sum()
-    else:
+    if pi0 is None:
         # Estimate pi0 and estimate number of correct targets
-        factor = pi0_from_pdfs_by_slope(target_pdf, decoy_pdf, pi0_estimation_threshold)
+        pi0 = pi0_from_pdfs_by_slope(target_pdf, decoy_pdf)
 
-    correct = target_pdf - decoy_pdf * factor
+    correct = target_pdf - decoy_pdf * pi0
     correct = np.clip(correct, 0, None)
 
     # Estimate peps from #correct targets, clip it
@@ -230,7 +228,7 @@ def peps_from_scores_kde_nnls(
 def peps_from_scores_hist_nnls(
     scores: np.ndarray[float],
     targets: np.ndarray[bool],
-    is_tdc: bool,
+    pi_factor: float = 1.0,
     scale_to_one: bool = False,
     weight_exponent: float = -1.0,
 ):
@@ -271,7 +269,7 @@ def peps_from_scores_hist_nnls(
 
     hist_data = hist_data_from_scores(scores, targets)
     peps_func = peps_func_from_hist_nnls(
-        hist_data, is_tdc, scale_to_one, weight_exponent
+        hist_data, pi_factor, scale_to_one, weight_exponent
     )
     return peps_func(scores)
 
@@ -279,7 +277,7 @@ def peps_from_scores_hist_nnls(
 @typechecked
 def peps_func_from_hist_nnls(
     hist_data: TDHistData,
-    is_tdc: bool,
+    pi_factor: float,
     scale_to_one: bool = False,
     weight_exponent: float = -1.0,
 ) -> Callable[[np.ndarray[float]], np.ndarray[float]]:
@@ -310,7 +308,7 @@ def peps_func_from_hist_nnls(
     eval_scores, target_counts, decoy_counts = hist_data.as_counts()
 
     n, k = estimate_trials_and_successes(
-        decoy_counts, target_counts, is_tdc, restrict=False
+        decoy_counts, target_counts, pi_factor, restrict=False
     )
 
     # Do monotone fit, minimizing || n - diag(p) * k || with weights n over
@@ -333,7 +331,7 @@ def peps_func_from_hist_nnls(
 def estimate_trials_and_successes(
     decoy_counts: np.ndarray[int],
     target_counts: np.ndarray[int],
-    is_tdc: bool,
+    pi_factor: float,
     restrict: bool = True,
 ):
     """Estimate trials/successes (assuming a binomial model) from decoy and
@@ -361,18 +359,12 @@ def estimate_trials_and_successes(
         successes per bin.
     """
 
-    if is_tdc:
-        factor = 1
-    else:
-        # Find correction factor (equivalent to pi0 for target/decoy density)
-        factor = pi0_from_pdfs_by_slope(target_counts, decoy_counts)
-
     # Estimate trials and successes per bin
     if restrict:
         n = np.maximum(target_counts, 1)
-        k = np.ceil(factor * decoy_counts).astype(int)
+        k = np.ceil(pi_factor * decoy_counts).astype(int)
         k = np.clip(k, 0, n)
     else:
         n = target_counts
-        k = factor * decoy_counts
+        k = pi_factor * decoy_counts
     return n, k

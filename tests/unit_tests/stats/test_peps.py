@@ -3,55 +3,84 @@ import pytest
 from scipy import stats
 
 import mokapot.stats.peps as peps
+from mokapot.stats.tdmodel import STDSModel
+from tests.helpers.utils import TestOutcome
+from .helpers import create_tdmodel
 
 
-def get_target_decoy_data():
-    # todo: should use tdmodel
+def rand_scores_stds():
     N = 5000
-    pi0 = 0.7
+    rho0 = 0.7
     R0 = stats.norm(loc=-4, scale=2)
     R1 = stats.norm(loc=3, scale=2)
-    NT0 = int(np.round(pi0 * N))
-    NT1 = N - NT0
-    target_scores = np.concatenate((
-        np.maximum(R1.rvs(NT1), R0.rvs(NT1)),
-        R0.rvs(NT0),
-    ))
-    decoy_scores = R0.rvs(N)
-    all_scores = np.concatenate((target_scores, decoy_scores))
-    is_target = np.concatenate((
-        np.full(len(target_scores), True),
-        np.full(len(decoy_scores), False),
-    ))
-
-    sortIdx = np.argsort(-all_scores)
-    return [all_scores[sortIdx], is_target[sortIdx]]
+    model = STDSModel(R0, R1, rho0)
+    scores, targets, is_fd = model.sample_scores(N)
+    return scores, targets, is_fd
 
 
+def peps_are_valid(peps, scores=None) -> TestOutcome:
+    """Helper function for tests on qvalues"""
+    if not np.all(peps >= 0):
+        return TestOutcome.fail("'peps must be >= 0'")
+    if not np.all(peps <= 1):
+        return TestOutcome.fail("'peps must be <= 1'")
+
+    if scores is not None:
+        ind = np.argsort(scores)
+        diff_peps = np.diff(peps[ind])
+        diff_scores = np.diff(scores[ind])
+        if not np.all(diff_peps * diff_scores <= 0):
+            return TestOutcome.fail(
+                "'peps are monotonically decreasing with higher scores'"
+            )
+
+        if not np.all((diff_scores != 0) | (diff_peps == 0)):
+            # Note that "!A | B" is the same as the implication "A => B"
+            # When two scores are equal they must have the same peps, but if
+            # they are different the may have the same pep
+            return TestOutcome.fail("'equal scores must have equal peps'")
+
+    return TestOutcome.success()
+
+
+@pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
+@pytest.mark.parametrize("is_tdc", [False])
+def test_peps_qvality(is_tdc, rho0):
+    N = 1000000
+    model = create_tdmodel(is_tdc, rho0, False, delta=2)
+    scores, targets, is_fd = model.sample_scores(N)
+
+    peps_values = peps.peps_from_scores_qvality(
+        scores, targets, is_tdc=False, use_binary=True
+    )
+    assert peps_are_valid(peps_values, scores=scores)
+
+
+@pytest.mark.parametrize("rho0", [0.1, 0.3, 0.8, 0.95])
 @pytest.mark.parametrize("is_tdc", [True, False])
-def test_peps_qvality(is_tdc):
-    scores, targets = get_target_decoy_data()
-    peps_values = peps.peps_from_scores_qvality(scores, targets, is_tdc)
-    assert np.all(peps_values >= 0)
-    assert np.all(peps_values <= 1)
-    assert np.all(np.diff(peps_values) * np.diff(scores) <= 0)
+def test_peps_kde_nnls(is_tdc, rho0):
+    model = create_tdmodel(is_tdc, rho0, False, delta=2, max_dev_z=10)
+    N = 100000
+    scores, targets, is_fd = model.sample_scores(N)
+    peps_exact = model.true_pep(scores)
 
+    pi0 = model.pi0_from_data(targets, is_fd)
 
-@pytest.mark.parametrize("is_tdc", [True, False])
-def test_peps_kde_nnls(is_tdc):
-    np.random.seed(1253)  # this produced an error with failing iterations in nnls
-    scores, targets = get_target_decoy_data()
-    peps_values = peps.peps_from_scores_kde_nnls(scores, targets, is_tdc)
-    assert np.all(peps_values >= 0)
-    assert np.all(peps_values <= 1)
-    assert np.all(np.diff(peps_values) * np.diff(scores) <= 0)
+    peps_values = peps.peps_from_scores_kde_nnls(scores, targets, pi0)
+    assert peps_are_valid(peps_values, scores=scores)
+    np.testing.assert_allclose(peps_values, peps_exact, atol=0.1)
 
-    np.random.seed(1245)  # this produced an assertion error due to peps over 1.0
-    scores, targets = get_target_decoy_data()
-    peps_values = peps.peps_from_scores_kde_nnls(scores, targets, is_tdc)
-    assert np.all(peps_values >= 0)
-    assert np.all(peps_values <= 1)
-    assert np.all(np.diff(peps_values) * np.diff(scores) <= 0)
+    peps_values2 = peps.peps_from_scores_qvality(
+        scores, targets, is_tdc=False, pi0=pi0, use_binary=False
+    )
+    assert peps_are_valid(peps_values2, scores=scores)
+    np.testing.assert_allclose(peps_values, peps_exact, atol=0.1)
+
+    peps_values3 = peps.peps_from_scores_hist_nnls(
+        scores, targets, pi_factor=pi0 * sum(targets) / sum(~targets)
+    )
+    assert peps_are_valid(peps_values3, scores=scores)
+    np.testing.assert_allclose(peps_values, peps_exact, atol=0.1)
 
 
 @pytest.mark.parametrize(
@@ -64,12 +93,10 @@ def test_peps_kde_nnls(is_tdc):
 )
 def test_peps_hist_nnls(seed):
     np.random.seed(seed)
-    scores, targets = get_target_decoy_data()
+    scores, targets, _ = rand_scores_stds()
 
     peps_values = peps.peps_from_scores_hist_nnls(scores, targets, False)
-    assert np.all(peps_values >= 0)
-    assert np.all(peps_values <= 1)
-    assert np.all(np.diff(peps_values) * np.diff(scores) <= 0)
+    assert peps_are_valid(peps_values, scores=scores)
 
 
 def test_peps_from_qvality_sorting():
@@ -81,6 +108,7 @@ def test_peps_from_qvality_sorting():
     scores = targets * rng.normal(1, 1, N) + (1 - targets) * rng.normal(-1, 1, N)
 
     peps0 = peps.peps_from_scores_qvality(scores, targets, True, use_binary=False)
+    assert peps_are_valid(peps0, scores=scores)
 
     index = np.argsort(scores)[::-1]
     scores_sorted, targets_sorted = scores[index], targets[index]
@@ -90,3 +118,4 @@ def test_peps_from_qvality_sorting():
     )
 
     assert np.all(peps0[index] == peps1)
+    assert peps_are_valid(peps1, scores=scores_sorted)

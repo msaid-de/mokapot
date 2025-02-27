@@ -75,7 +75,7 @@ def asc_scores():
     return scores, target, qvals
 
 
-def qvalues_are_valid(qvalues, scores=None):
+def qvalues_are_valid(qvalues, scores=None) -> TestOutcome:
     """Helper function for tests on qvalues"""
     if not np.all(qvalues >= 0):
         return TestOutcome.fail("'qvalues must be >= 0'")
