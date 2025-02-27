@@ -34,6 +34,14 @@ class Pi0EstAlgorithm(ABC):
     def estimate(self, scores, targets):
         raise NotImplementedError
 
+    def estimate_pi_factor(
+        self, scores: np.ndarray[float], targets: np.ndarray[bool]
+    ) -> float:
+        pi0 = self.estimate(scores, targets)
+        targets_count = targets.sum()
+        decoys_count = (~targets).sum()
+        return pi0 * targets_count / decoys_count
+
     @classmethod
     def set_algorithm(cls, pi0_algo: Pi0EstAlgorithm):
         cls.pi0_algo = pi0_algo
@@ -55,6 +63,11 @@ class TDCPi0Algorithm(Pi0EstAlgorithm):
             )
         decoy_target_ratio = decoys_count / targets_count
         return decoy_target_ratio
+
+    def estimate_pi_factor(
+        self, scores: np.ndarray[float], targets: np.ndarray[bool]
+    ) -> float:
+        return 1.0
 
     def long_desc(self) -> str:
         return "decoy_target_ratio"
@@ -141,6 +154,15 @@ class QvalueAlgorithm(ABC):
         LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
         return pi0
 
+    def estimate_pi_factor(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        # todo: move into mixin class
+        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
+        pi_factor = pi0_algo.estimate_pi_factor(scores, targets)
+        LOGGER.debug(
+            f"pi-factor estimate: pi_factor={pi_factor}, algo={pi0_algo.long_desc()}"
+        )
+        return pi_factor
+
     @abstractmethod
     def estimate(self, scores, targets, desc):
         raise NotImplementedError
@@ -173,8 +195,8 @@ class CountsQvalueAlgorithm(QvalueAlgorithm):
     ):
         if not desc:
             scores = -scores
-        pi0 = super().estimate_pi0(scores, targets)
-        qvals = qvalues.qvalues_from_counts(scores, targets, is_tdc=self.tdc, pi0=pi0)
+        pi_factor = super().estimate_pi_factor(scores, targets)
+        qvals = qvalues.qvalues_from_counts(scores, targets, pi_factor=pi_factor)
         return qvals
 
     def long_desc(self):
