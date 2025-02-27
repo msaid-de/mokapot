@@ -226,7 +226,7 @@ def configure_algorithms(config):
         case "fixed":
             pi0_algorithm = FixedPi0(config.pi0_value)
         case "bootstrap":
-            pi0_algorithm = BootstrapPi0Algorithm(config.pi0_value)
+            pi0_algorithm = BootstrapPi0Algorithm()
         case "storey_smoother":
             pi0_algorithm = StoreyPi0Algorithm("smoother", config.pi0_eval_lambda)
         case "storey_fixed":

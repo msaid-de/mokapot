@@ -363,35 +363,37 @@ def test_cli_algo_options(tmp_path, scope_files):
 
     with pytest.raises(Exception):
         run_mokapot_cli(
-            params + ["--no-tdc", "--qvalue_algorithm", "tdc"],
-            run_in_subprocess=False,
-        )
-    with pytest.raises(Exception):
-        run_mokapot_cli(
             params + ["--no-tdc", "--pi0_algorithm", "ratio"],
             run_in_subprocess=False,
         )
 
     # tdc
     targets_psms_df1 = run_with_options(True, "default")
-    targets_psms_df2 = run_with_options(True, "tdc")
+    targets_psms_df2 = run_with_options(True, "from_counts")
     pd.testing.assert_frame_equal(targets_psms_df1, targets_psms_df2)
 
-    targets_psms_df3 = run_with_options(True, "from_counts")
-    pd.testing.assert_frame_equal(targets_psms_df1, targets_psms_df3)
+    targets_psms_df2 = run_with_options(True, "from_counts", "slope")
+    pd.testing.assert_frame_equal(targets_psms_df1, targets_psms_df2)
+    targets_psms_df2 = run_with_options(True, "from_counts", "bootstrap")
+    pd.testing.assert_frame_equal(targets_psms_df1, targets_psms_df2)
+    targets_psms_df2 = run_with_options(True, "from_counts", "fixed")
+    pd.testing.assert_frame_equal(targets_psms_df1, targets_psms_df2)
 
-    targets_psms_df3 = run_with_options(True, "storey", pi0algo="ratio")
-    assert_result_frames_close(targets_psms_df1, targets_psms_df3)
+    targets_psms_df2 = run_with_options(True, "storey", pi0algo="ratio")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2)
 
-    targets_psms_df3 = run_with_options(True, "storey", pi0algo="storey_fixed")
-    assert_result_frames_close(targets_psms_df1, targets_psms_df3, 8)
+    targets_psms_df2 = run_with_options(True, "storey", pi0algo="storey_fixed")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2, 8)
 
     # no-tdc
-    targets_psms_df3 = run_with_options(False, "storey")
-    assert_result_frames_close(targets_psms_df1, targets_psms_df3, 8)
+    targets_psms_df2 = run_with_options(False, "storey")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2, 8)
 
-    targets_psms_df3 = run_with_options(False, "storey", pi0algo="storey_smoother")
-    assert_result_frames_close(targets_psms_df1, targets_psms_df3, 8)
+    targets_psms_df2 = run_with_options(False, "storey", pi0algo="storey_smoother")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2, 8)
 
-    targets_psms_df3 = run_with_options(False, "storey", pi0algo="storey_fixed")
-    assert_result_frames_close(targets_psms_df1, targets_psms_df3, 8)
+    targets_psms_df2 = run_with_options(False, "storey", pi0algo="storey_fixed")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2, 8)
+
+    targets_psms_df2 = run_with_options(False, "storey", pi0algo="storey_bootstrap")
+    assert_result_frames_close(targets_psms_df1, targets_psms_df2, 8)
