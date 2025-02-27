@@ -9,7 +9,7 @@ from typeguard import typechecked
 
 import mokapot.stats.pi0est
 import mokapot.stats.pvalues as pvalues
-from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.monotonize import monotonize_simple
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope, pi0_from_pvalues_storey
 
@@ -66,7 +66,7 @@ def qvalues_from_counts_tdc(
     # should only be bool, nothing else. The rest is the job of the calling code.
 
     # todo: should be removed and only qvalues_from_counts be used
-    return qvalues_from_counts(scores, targets, is_tdc=True, desc=desc)
+    return qvalues_from_counts(scores, targets, pi_factor=1.0, desc=desc)
 
 
 @typechecked
@@ -131,9 +131,9 @@ def qvalues_from_peps(
 def qvalues_from_counts(
     scores: np.ndarray[float],
     targets: np.ndarray[bool],
-    is_tdc: bool = True,
+    *,
     desc: bool = True,
-    pi0: float | None = None,
+    pi_factor: float = 1,
 ):
     r"""
     Compute qvalues from target/decoy counts.
@@ -174,25 +174,12 @@ def qvalues_from_counts(
     if not desc:
         scores = -scores
 
-    factor = None
-    if pi0 is None:
-        if is_tdc:
-            factor = 1
-        else:
-            hist_data = hist_data_from_scores(scores, targets)
-            eval_scores, target_density, decoy_density = hist_data.as_densities()
-            pi0 = pi0_from_pdfs_by_slope(target_density, decoy_density)
-
-    if factor is None:
-        target_decoy_ratio = targets.sum() / (~targets).sum()
-        factor = pi0 * target_decoy_ratio
-
     # Sort by score, but take also care of multiple targets/decoys per score
     ind = np.lexsort((targets, -scores))
     targets_sorted = targets[ind]
     scores_sorted = scores[ind]
     fdr_sorted = (
-        factor
+        pi_factor
         * ((~targets_sorted).cumsum() + 1)
         / np.maximum(targets_sorted.cumsum(), 1)
     )

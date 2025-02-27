@@ -175,10 +175,10 @@ def test_qvalues_from_peps(rand_scores, is_tdc):
     assert qvalues_are_valid(qvalues, scores)
 
 
-@pytest.mark.parametrize("is_tdc", [True, False])
-def test_qvalues_from_counts(rand_scores, is_tdc):
+@pytest.mark.parametrize("pi_factor", [1.0, 0.9])
+def test_qvalues_from_counts(rand_scores, pi_factor):
     scores, targets = rand_scores
-    qvalues = qvalues_from_counts(scores, targets, is_tdc)
+    qvalues = qvalues_from_counts(scores, targets, pi_factor=pi_factor)
     assert qvalues_are_valid(qvalues, scores)
 
 
@@ -202,7 +202,7 @@ def test_qvalues_from_counts_descending(desc_scores):
     """Test that q-values are correct for descending scores"""
     scores, target, true_qvals = desc_scores
     targets = target == 1
-    qvals = qvalues_from_counts(scores, targets, is_tdc=True)
+    qvals = qvalues_from_counts(scores, targets)
     np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
 
 
@@ -227,7 +227,7 @@ def test_compare_rand_qvalues_from_hist_vs_count(rand_scores):
     hist_data = hist_data_from_scores(scores, targets)
     qvalue_func = qvalues_func_from_hist(hist_data, is_tdc=True)
     qvals_hist = qvalue_func(scores)
-    qvals_counts = qvalues_from_counts(scores, targets, is_tdc=True)
+    qvals_counts = qvalues_from_counts(scores, targets)
 
     np.testing.assert_allclose(qvals_hist, qvals_counts, atol=0.02)
 
@@ -236,18 +236,15 @@ def test_qvalues_discrete(rand_scores):
     scores, targets = rand_scores
     scores = np.asarray(scores > scores.mean(), dtype=float)
 
-    qvals_tdc = qvalues_from_counts_tdc(scores, targets)
-
-    qvals_counts = qvalues_from_counts(scores, targets, is_tdc=True)
-    np.testing.assert_allclose(qvals_counts, qvals_tdc)
+    qvals_counts = qvalues_from_counts(scores, targets)
 
     # A tolerance of 0.1 is okay in the following tests, since the methods are
     # widely different.
     qvals_st1 = qvalues_from_storeys_algo(scores, targets, pvalue_method="conservative")
-    np.testing.assert_allclose(qvals_st1, qvals_tdc, atol=0.1)
+    np.testing.assert_allclose(qvals_st1, qvals_counts, atol=0.1)
 
     qvals_st2 = qvalues_from_storeys_algo(scores, targets, pvalue_method="storey")
-    np.testing.assert_allclose(qvals_st2, qvals_tdc, atol=0.1)
+    np.testing.assert_allclose(qvals_st2, qvals_counts, atol=0.1)
 
 
 def test_qvalues_storey():
