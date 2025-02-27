@@ -139,12 +139,11 @@ class FixedPi0(Pi0EstAlgorithm):
         return f"fixed_pi0({self.pi0})"
 
 
-## Algorithms for qvalue computation
-@typechecked
-class QvalueAlgorithm(ABC):
-    qvalue_algo = None
+class Pi0EstimationMixin:
+    pi0_algo: Pi0EstAlgorithm
 
-    def __init__(self, pi0_algo):
+    def __init__(self, pi0_algo: Pi0EstAlgorithm, **kwargs):
+        super().__init__(**kwargs)
         self.pi0_algo = pi0_algo
 
     def estimate_pi0(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
@@ -162,6 +161,15 @@ class QvalueAlgorithm(ABC):
             f"pi-factor estimate: pi_factor={pi_factor}, algo={pi0_algo.long_desc()}"
         )
         return pi_factor
+
+
+## Algorithms for qvalue computation
+@typechecked
+class QvalueAlgorithm(ABC, Pi0EstimationMixin):
+    qvalue_algo = None
+
+    def __init__(self, pi0_algo: Pi0EstAlgorithm):
+        super().__init__(pi0_algo=pi0_algo)
 
     @abstractmethod
     def estimate(self, scores, targets, desc):

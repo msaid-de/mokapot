@@ -19,6 +19,7 @@ from mokapot.stats.qvalues import (
     qvalues_from_storeys_algo,
     qvalues_func_from_hist,
 )
+from mokapot.stats.tdmodel import STDSModel
 from tests.helpers.utils import TestOutcome
 
 
@@ -123,27 +124,15 @@ def test_tdc_diff_len():
 
 
 @pytest.fixture
-def rand_scores():
+def rand_scores_stds():
     np.random.seed(1240)  # this produced an error with failing iterations
     N = 5000
-    pi0 = 0.7
+    rho0 = 0.7
     R0 = stats.norm(loc=-4, scale=2)
     R1 = stats.norm(loc=3, scale=2)
-    NT0 = int(np.round(pi0 * N))
-    NT1 = N - NT0
-    target_scores = np.concatenate((
-        np.maximum(R1.rvs(NT1), R0.rvs(NT1)),
-        R0.rvs(NT0),
-    ))
-    decoy_scores = R0.rvs(N)
-    all_scores = np.concatenate((target_scores, decoy_scores))
-    is_target = np.concatenate((
-        np.full(len(target_scores), True),
-        np.full(len(decoy_scores), False),
-    ))
-    # Generate a permutation of indices and apply the permutation to both arrays
-    permutation = np.random.permutation(len(all_scores))
-    return [all_scores[permutation], is_target[permutation]]
+    model = STDSModel(R0, R1, rho0)
+    scores, targets, is_fd = model.sample_scores(N)
+    return scores, targets, is_fd
 
 
 def all_sorted(arrays, desc=True):
@@ -152,43 +141,43 @@ def all_sorted(arrays, desc=True):
 
 
 def rounded(arrays, decimals=1):
-    scores, is_target = arrays
+    scores, *args = arrays
     scores = np.round(scores, decimals=decimals)
-    return scores, is_target
+    return scores, *args
 
 
 @pytest.fixture
-def rand_scores_rounded(rand_scores):
-    [all_scores, is_target] = rand_scores
+def rand_scores_rounded(rand_scores_stds):
+    all_scores, is_target, is_fd = rand_scores_stds
     sortIdx = np.argsort(-all_scores)
-    return [all_scores[sortIdx], is_target[sortIdx]]
+    return all_scores[sortIdx], is_target[sortIdx], is_fd[sortIdx]
 
 
 @pytest.mark.parametrize("is_tdc", [True, False])
-def test_qvalues_from_peps(rand_scores, is_tdc):
+def test_qvalues_from_peps(rand_scores_stds, is_tdc):
     # Note: we should also test against some known truth
     #   (of course, up to some error margin and fixing the random seed),
     #   and also against shuffeling of the target/decoy sequences.
-    scores, targets = rand_scores
+    scores, targets, _ = rand_scores_stds
     peps = peps_from_scores_hist_nnls(scores, targets, is_tdc)
     qvalues = qvalues_from_peps(scores, targets, peps)
     assert qvalues_are_valid(qvalues, scores)
 
 
 @pytest.mark.parametrize("pi_factor", [1.0, 0.9])
-def test_qvalues_from_counts(rand_scores, pi_factor):
-    scores, targets = rand_scores
+def test_qvalues_from_counts(rand_scores_stds, pi_factor):
+    scores, targets, _ = rand_scores_stds
     qvalues = qvalues_from_counts(scores, targets, pi_factor=pi_factor)
     assert qvalues_are_valid(qvalues, scores)
 
 
-def test_qvalues_from_storey(rand_scores):
-    scores, targets = rand_scores
+def test_qvalues_from_storey(rand_scores_stds):
+    scores, targets, _ = rand_scores_stds
     qvalues = qvalues_from_storeys_algo(scores, targets, decoy_qvals_by_interp=True)
     assert qvalues_are_valid(qvalues, scores)
 
     # Test with rounded scores, so that there are scores
-    scores, targets = rounded(rand_scores, decimals=0)
+    scores, targets, _ = rounded(rand_scores_stds, decimals=0)
     qvalues = qvalues_from_storeys_algo(scores, targets, decoy_qvals_by_interp=True)
     assert qvalues_are_valid(qvalues, scores)
 
@@ -214,29 +203,30 @@ def test_qvalues_from_hist_desc(desc_scores):
     bin_edges = np.unique(np.sort(np.concatenate((bin_edges, scores))))
 
     hist_data = TDHistData.from_scores_targets(bin_edges, scores, targets)
-    qvalue_func = qvalues_func_from_hist(hist_data, is_tdc=True)
+    qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=1)
     qvals = qvalue_func(scores)
 
     np.testing.assert_allclose(qvals, true_qvals, atol=1e-7)
 
 
-def test_compare_rand_qvalues_from_hist_vs_count(rand_scores):
+@pytest.mark.parametrize("pi_factor", [1.0, 0.7])
+def test_compare_rand_qvalues_from_hist_vs_count(rand_scores_stds, pi_factor):
     # Compare the q-values computed via counts with those computed via
     # histogram on a dataset of a few thousand random scores
-    scores, targets = rand_scores
+    scores, targets, _ = rand_scores_stds
     hist_data = hist_data_from_scores(scores, targets)
-    qvalue_func = qvalues_func_from_hist(hist_data, is_tdc=True)
+    qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=pi_factor)
     qvals_hist = qvalue_func(scores)
-    qvals_counts = qvalues_from_counts(scores, targets)
+    qvals_counts = qvalues_from_counts(scores, targets, pi_factor=pi_factor)
 
     np.testing.assert_allclose(qvals_hist, qvals_counts, atol=0.02)
 
 
-def test_qvalues_discrete(rand_scores):
-    scores, targets = rand_scores
+def test_qvalues_discrete(rand_scores_stds):
+    scores, targets, _ = rand_scores_stds
     scores = np.asarray(scores > scores.mean(), dtype=float)
 
-    qvals_counts = qvalues_from_counts(scores, targets)
+    qvals_counts = qvalues_from_counts(scores, targets, pi_factor=1)
 
     # A tolerance of 0.1 is okay in the following tests, since the methods are
     # widely different.

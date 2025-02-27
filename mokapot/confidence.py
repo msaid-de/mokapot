@@ -633,6 +633,7 @@ def compute_and_write_confidence(
             level,
             peps_algorithm,
         )
+
         try:
             peps = peps_from_scores(
                 scores, targets, is_tdc=True, pep_algorithm=peps_algorithm
@@ -670,8 +671,10 @@ def compute_and_write_confidence(
             )
 
         LOGGER.info("Estimating q-value and PEP assignment functions...")
-        qvalues_func = qvalues_func_from_hist(hist_data, is_tdc=True)
-        peps_func = peps_func_from_hist_nnls(hist_data, is_tdc=True)
+        # todo: check that pi_factor thingy...
+        # Should also use the "algorithms"
+        qvalues_func = qvalues_func_from_hist(hist_data, pi_factor=1.0)
+        peps_func = peps_func_from_hist_nnls(hist_data, pi_factor=1.0)
 
         LOGGER.info("Streaming q-value and PEP assignments...")
         for df_chunk in temp_reader.get_chunked_data_iterator(

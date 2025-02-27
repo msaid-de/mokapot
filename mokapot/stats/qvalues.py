@@ -11,7 +11,7 @@ import mokapot.stats.pi0est
 import mokapot.stats.pvalues as pvalues
 from mokapot.stats.histdata import TDHistData
 from mokapot.stats.monotonize import monotonize_simple
-from mokapot.stats.pi0est import pi0_from_pdfs_by_slope, pi0_from_pvalues_storey
+from mokapot.stats.pi0est import pi0_from_pvalues_storey
 
 
 @typechecked
@@ -208,7 +208,7 @@ def qvalues_from_counts(
 
 @typechecked
 def qvalues_func_from_hist(
-    hist_data: TDHistData, is_tdc: bool
+    hist_data: TDHistData, pi_factor: float
 ) -> Callable[[np.ndarray[float]], np.ndarray[float]]:
     r"""Compute q-values from histogram counts.
 
@@ -236,15 +236,11 @@ def qvalues_func_from_hist(
     """
 
     _, target_counts, decoy_counts = hist_data.as_counts()
-    if is_tdc:
-        factor = 1
-    else:
-        factor = pi0_from_pdfs_by_slope(target_counts, decoy_counts)
 
     targets_sum = np.flip(target_counts).cumsum()
     decoys_sum = np.flip(decoy_counts).cumsum()
 
-    fdr_flipped = factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
+    fdr_flipped = pi_factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
     fdr_flipped = np.clip(fdr_flipped, 0.0, 1.0)
     qvalues_flipped = monotonize_simple(fdr_flipped, ascending=True, reverse=True)
     qvalues = np.flip(qvalues_flipped)
