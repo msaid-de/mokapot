@@ -2,15 +2,8 @@ import numpy as np
 import pytest
 from numpy.ma.core import allclose
 
+from mokapot.stats.utils import bernoulli_zscore2
 from .helpers import create_tdmodel
-
-
-def bernoulli_zscore(n1, k1, n2, k2):
-    p1 = k1 / n1
-    p2 = k2 / n2
-    p = (k1 + k2) / (n1 + n2)
-    z = (p1 - p2) / np.sqrt(p * (1 - p) * (1 / n1 + 1 / n2))
-    return z
 
 
 @pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
@@ -47,7 +40,7 @@ def test_tdmodel(discrete, is_tdc, rho0):
     # approximately for STDS with small rho0 and good separation)
 
     if is_tdc:
-        z = bernoulli_zscore(N, num_decoys, N, num_false_targets)
+        z = bernoulli_zscore2(N, num_decoys, N, num_false_targets)
         # Use 1.96 for confidence level 0.05, and 2.58 for alpha=0.01
         assert abs(z) < 1.96
 

@@ -62,3 +62,17 @@ def toc():
     global __tictoc_t0
     elapsed = time.time() - __tictoc_t0
     logging.info(f"Elapsed time: {elapsed}")
+
+
+def bernoulli_zscore1(n, k, p):
+    p1 = k / n
+    z = (p1 - p) / np.sqrt(p * (1 - p) / n)
+    return z
+
+
+def bernoulli_zscore2(n1, k1, n2, k2):
+    p1 = k1 / n1
+    p2 = k2 / n2
+    p = (k1 + k2) / (n1 + n2)
+    z = (p1 - p2) / np.sqrt(p * (1 - p) * (1 / n1 + 1 / n2))
+    return z

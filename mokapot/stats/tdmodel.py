@@ -3,7 +3,11 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import scipy as sp
+from numpy.random import Generator, MT19937, RandomState, SeedSequence
 from typeguard import typechecked
+
+from mokapot.stats.utils import bernoulli_zscore1
+
 
 # This file (class) is only for checking validity of TD modelling assumptions.
 
@@ -25,6 +29,8 @@ class RandomVarDiscrete(RandomVarBase, typing.Protocol):
 
 
 RandomVar = RandomVarContinuous | RandomVarDiscrete
+
+SeedType = RandomState | Generator | int | None
 
 
 @typechecked
@@ -161,10 +167,10 @@ class TDModel(ABC):
         self.is_discrete = is_discrete(R0)
         self.rho0 = rho0
 
-    def _perturb(self, samples, delta=1e-10):
+    def _perturb(self, samples, delta=1e-10, rs: SeedType = None):
         # Add some perturbation in case of discrete distributions
         if self.is_discrete:
-            return samples + delta * self.U.rvs(len(samples))
+            return samples + delta * self.U.rvs(len(samples), random_state=rs)
         else:
             return samples
 
@@ -174,30 +180,36 @@ class TDModel(ABC):
         else:
             return samples
 
-    def _sample_from(self, R: RandomVar, N: int, perturb: bool):
-        samples = R.rvs(N).astype(float)
-        return self._perturb(samples) if perturb else samples
+    def _sample_from(self, R: RandomVar, N: int, perturb: bool, rs: SeedType = None):
+        samples = R.rvs(N, random_state=rs).astype(float)
+        return self._perturb(samples, rs=rs) if perturb else samples
 
-    def sample_true_targets(self, N: int, perturb: bool = False) -> np.ndarray[float]:
-        return self._sample_from(self.R1, N, perturb)
+    def sample_true_targets(
+        self, N: int, perturb: bool = False, rs: SeedType = None
+    ) -> np.ndarray[float]:
+        return self._sample_from(self.R1, N, perturb, rs)
 
-    def sample_false_targets(self, N: int, perturb: bool = False) -> np.ndarray[float]:
-        return self._sample_from(self.R0, N, perturb)
+    def sample_false_targets(
+        self, N: int, perturb: bool = False, rs: SeedType = None
+    ) -> np.ndarray[float]:
+        return self._sample_from(self.R0, N, perturb, rs)
 
-    def sample_decoys(self, N: int, perturb: bool = False) -> np.ndarray[float]:
+    def sample_decoys(
+        self, N: int, perturb: bool = False, rs: SeedType = None
+    ) -> np.ndarray[float]:
         # This is by the central target-decoy method assumption
-        return self.sample_false_targets(N, perturb)
+        return self.sample_false_targets(N, perturb, rs)
 
     def _sample_targets(
-        self, N: int, include_is_fd: bool = True
+        self, N: int, include_is_fd: bool = True, rs: SeedType = None
     ) -> tuple[np.ndarray[float], np.ndarray[bool]] | np.ndarray[float]:
         NT = N
 
-        X = self.sample_true_targets(NT, perturb=True)
+        X = self.sample_true_targets(NT, perturb=True, rs=rs)
         is_foreign = self.U.rvs(NT) < self.rho0
         X[is_foreign] = -np.inf
 
-        Y = self.sample_false_targets(NT, perturb=True)
+        Y = self.sample_false_targets(NT, perturb=True, rs=rs)
         Z = np.maximum(X, Y)
 
         target_scores = Z
@@ -206,13 +218,15 @@ class TDModel(ABC):
         return target_scores, is_fd
 
     @abstractmethod
-    def sample_scores(self, N: int):
+    def sample_scores(self, N: int, rs: SeedType = None) -> np.ndarray[float]:
         # Depends on whether target decoy competition or separate search is employed
         pass
 
-    def _sample_both(self, NT: int, ND: int):
-        target_scores, is_fd = self._sample_targets(NT)
-        decoy_scores = self.sample_decoys(ND, perturb=True)
+    def _sample_both(
+        self, NT: int, ND: int, rs: SeedType = None
+    ) -> tuple[np.ndarray[float], np.ndarray[float], np.ndarray[bool]]:
+        target_scores, is_fd = self._sample_targets(NT, rs=rs)
+        decoy_scores = self.sample_decoys(ND, perturb=True, rs=rs)
         return target_scores, decoy_scores, is_fd
 
     @staticmethod
@@ -327,15 +341,57 @@ class TDModel(ABC):
         num_false_targets = (targets & is_fd).sum()
         return num_false_targets / num_targets
 
+    def td_assumption_deviation(self, rs: SeedType = None):
+        """
+        Evaluates the deviation from the target-decoy assumption for given model.
+
+        The function simulates a comparison between scores from a target set and
+        scores from a decoy set to assess the probability of the target-decoy
+        assumption being met or deviated. It uses random sampling to simulate the
+        outcomes, calculating the winning fraction of target scores compared to
+        decoy scores. Additionally, it computes a z-score to quantify the
+        statistical significance of the outcome.
+
+        In terms of testing target decoy algorithms
+
+        Parameters
+        ----------
+        rs : SeedType, optional
+            A random state or seed used to initialize the random number generator for
+            reproducibility. Defaults to None, which initializes with a fixed seed.
+
+        Returns
+        -------
+        z : float
+            The computed z-score, representing the statistical significance of the
+            deviation from the target-decoy assumption.
+        ft_wins : float
+            The proportion of target scores that win over decoy scores in the simulated
+            outcomes.
+        """
+        if rs is None:
+            rs = RandomState(MT19937(SeedSequence(123456789)))
+        N = 100000
+        scores, targets, is_fd = self.sample_scores(N, rs=rs)
+
+        ft_scores = scores[targets & is_fd]
+        decoy_scores = scores[~targets]
+        ft_samples = rs.choice(ft_scores, N, replace=True)
+        decoy_samples = rs.choice(decoy_scores, N, replace=True)
+        ft_wins = sum(ft_samples > decoy_samples)
+        ft_wins = float(ft_wins + 0.5 * sum(ft_samples == decoy_samples))
+        z = bernoulli_zscore1(N, ft_wins, 0.5)
+        return z, ft_wins / N
+
 
 @typechecked
 class TDCModel(TDModel):
     """A TDModel class for target decoy competition or concatenated search"""
 
     def sample_scores(
-        self, N: int
+        self, N: int, rs: SeedType | None = None
     ) -> tuple[np.ndarray[float], np.ndarray[bool], np.ndarray[bool]]:
-        target_scores, decoy_scores, is_fd = self._sample_both(N, N)
+        target_scores, decoy_scores, is_fd = self._sample_both(N, N, rs)
 
         is_target = target_scores >= decoy_scores
 
@@ -370,7 +426,7 @@ class STDSModel(TDModel):
     """A TDModel class for separate search"""
 
     def sample_scores(
-        self, NT: int, ND: int | None = None
+        self, NT: int, ND: int | None = None, rs: SeedType | None = None
     ) -> tuple[
         np.ndarray[float], np.ndarray[bool], np.ndarray[bool] | np.ndarray[bool]
     ]:
