@@ -134,8 +134,6 @@ def main(main_args=None):
         deduplication=not config.skip_deduplication,
         do_rollup=not config.skip_rollup,
         proteins=proteins,
-        peps_error=config.peps_error,
-        peps_algorithm=config.peps_algorithm,
         sqlite_path=config.sqlite_db_path,
         stream_confidence=config.stream_confidence,
     )

@@ -30,12 +30,10 @@ from mokapot.column_defs import get_standard_column_name
 from mokapot.constants import CONFIDENCE_CHUNK_SIZE
 from mokapot.dataset import OnDiskPsmDataset
 from mokapot.picked_protein import picked_protein
-from mokapot.stats.algorithms import QvalueAlgorithm
+from mokapot.stats.algorithms import PepsAlgorithm, QvalueAlgorithm
 from mokapot.stats.histdata import HistData, TDHistData
 from mokapot.stats.peps import (
-    peps_from_scores,
     peps_func_from_hist_nnls,
-    PepsConvergenceError,
 )
 from mokapot.stats.qvalues import qvalues_func_from_hist
 from mokapot.stats.statistics import OnlineStatistics
@@ -72,9 +70,7 @@ class Confidence(object):
         write_decoys: bool = False,
         do_rollup: bool = True,
         proteins=None,
-        peps_error: bool = False,
         rng=0,
-        peps_algorithm: str = "qvality",
         stream_confidence: bool = False,
         score_stats=None,
     ):
@@ -123,8 +119,6 @@ class Confidence(object):
             level_path_map=level_paths,
             out_writers_map=out_writers,
             write_decoys=write_decoys,
-            peps_error=peps_error,
-            peps_algorithm=peps_algorithm,
             stream_confidence=stream_confidence,
             score_stats=score_stats,
             eval_fdr=eval_fdr,
@@ -136,8 +130,6 @@ class Confidence(object):
         level_path_map: dict[str, Path],
         out_writers_map: dict[str, Sequence[TabularDataWriter]],
         write_decoys: bool = False,
-        peps_error: bool = False,
-        peps_algorithm: str = "qvality",
         stream_confidence: bool = False,
         score_stats=None,
         eval_fdr: float = 0.01,
@@ -179,10 +171,8 @@ class Confidence(object):
             compute_and_write_confidence(
                 reader,
                 writer,
-                peps_algorithm,
                 stream_confidence,
                 score_stats,
-                peps_error,
                 level,
                 eval_fdr,
             )
@@ -231,8 +221,6 @@ def assign_confidence(
     proteins=None,
     append_to_output_file=False,
     rng=0,
-    peps_error=False,
-    peps_algorithm="qvality",
     sqlite_path=None,
     stream_confidence=False,
 ):
@@ -490,8 +478,6 @@ def assign_confidence(
             do_rollup=do_rollup,
             proteins=proteins,
             rng=rng,
-            peps_error=peps_error,
-            peps_algorithm=peps_algorithm,
             stream_confidence=stream_confidence,
             score_stats=score_stats,
         )
@@ -593,10 +579,8 @@ def _save_sorted_metadata_chunks(
 def compute_and_write_confidence(
     temp_reader: TabularDataReader,
     writer: TabularDataWriter,
-    peps_algorithm: str,
     stream_confidence: bool,
     score_stats: OnlineStatistics,
-    peps_error: bool,
     level: str,
     eval_fdr: float,
 ):
@@ -629,26 +613,11 @@ def compute_and_write_confidence(
 
         # Calculate PEPs
         LOGGER.info(
-            "Assigning PEPs to %s (using %s algorithm) ...",
-            level,
-            peps_algorithm,
+            f"Assigning PEPs to {level} "
+            f"(using {PepsAlgorithm.long_desc()} algorithm) ..."
         )
 
-        try:
-            peps = peps_from_scores(
-                scores, targets, is_tdc=True, pep_algorithm=peps_algorithm
-            )
-        except PepsConvergenceError:
-            LOGGER.info(
-                f"\t- Encountered convergence problems in `{peps_algorithm}`. "
-                "Falling back to qvality ...",
-            )
-            peps = peps_from_scores(
-                scores, targets, is_tdc=True, pep_algorithm="qvality"
-            )
-
-        if peps_error and all(peps == 1):
-            raise ValueError("PEP values are all equal to 1.")
+        peps = PepsAlgorithm.eval(scores, targets)
         data[peps_column] = peps
 
         writer.append_data(data)

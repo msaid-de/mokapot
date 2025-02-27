@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from typeguard import typechecked
 
+import mokapot.stats.peps as pepsmod
 import mokapot.stats.pi0est as pi0est
 import mokapot.stats.pvalues as pvalues
 import mokapot.stats.qvalues as qvalues
@@ -26,6 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 ## Algorithms for pi0 estimation
+@typechecked
 class Pi0EstAlgorithm(ABC):
     # Derived classes: StoreyPi0Algorithm, TDSlopePi0Algorithm
     pi0_algo = None
@@ -139,6 +141,7 @@ class FixedPi0(Pi0EstAlgorithm):
         return f"fixed_pi0({self.pi0})"
 
 
+@typechecked
 class Pi0EstimationMixin:
     pi0_algo: Pi0EstAlgorithm
 
@@ -194,9 +197,9 @@ class QvalueAlgorithm(ABC, Pi0EstimationMixin):
 
 @typechecked
 class CountsQvalueAlgorithm(QvalueAlgorithm):
-    def __init__(self, tdc: bool, pi0_algo: Pi0EstAlgorithm):
+    def __init__(self, *, is_tdc: bool, pi0_algo: Pi0EstAlgorithm):
         super().__init__(pi0_algo)
-        self.tdc = tdc
+        self.tdc = is_tdc
 
     def estimate(
         self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool
@@ -231,10 +234,109 @@ class StoreyQvalueAlgorithm(QvalueAlgorithm):
 
 
 # Algoritms for pep computation
-class PEPAlgorithm(ABC):
+@typechecked
+class PepsAlgorithm(ABC, Pi0EstimationMixin):
     # Derived classes: TriqlerPEPAlgorithm, HistNNLSAlgorithm, KDENNLSAlgorithm
     # Not yet: StoreyLFDRAlgorithm (probit, logit)
-    pass
+    peps_algo: PepsAlgorithm | None = None
+    peps_error: bool = True
+
+    def __init__(self, pi0_algo: Pi0EstAlgorithm):
+        super().__init__(pi0_algo=pi0_algo)
+
+    @abstractmethod
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        raise NotImplementedError
+
+    @classmethod
+    def set_algorithm(cls, peps_algo: PepsAlgorithm):
+        cls.peps_algo = peps_algo
+
+    @classmethod
+    def eval(cls, scores, targets):
+        if cls.peps_algo is None:
+            raise ValueError("peps_algorithm is not set")
+        try:
+            peps = cls.peps_algo.estimate(scores, targets)
+        except pepsmod.PepsConvergenceError:
+            LOGGER.info(
+                f"\t- Encountered convergence problems in `{cls.peps_algo}`. "
+                "Falling back to qvality ...",
+            )
+            pi0 = Pi0EstAlgorithm.estimate(scores, targets)
+            peps = pepsmod.peps_from_scores_qvality(
+                scores, targets, use_binary=False, pi0=pi0
+            )
+
+        if cls.peps_error and all(peps == 1):
+            raise ValueError("PEP values are all equal to 1.")
+
+        return peps
+
+    @classmethod
+    def long_desc(cls):
+        if cls.peps_algo is None:
+            raise ValueError("peps_algorithm is not set")
+        return cls.peps_algo.long_desc()
+
+
+@typechecked
+class TriqlerPepsAlgorithm(PepsAlgorithm):
+    def __init__(self, *, pi0_algo=None):
+        super().__init__(pi0_algo)
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        pi0 = super().estimate_pi0(scores, targets)
+        peps = pepsmod.peps_from_scores_qvality(
+            scores, targets, use_binary=False, pi0=pi0, is_tdc=True
+        )
+        return peps
+
+    def long_desc(self):
+        return "peps_by_triqler"
+
+
+@typechecked
+class QvalityPepsAlgorithm(PepsAlgorithm):
+    def __init__(self, *, is_tdc=True):
+        self.is_tdc = is_tdc
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        peps = pepsmod.peps_from_scores_qvality(
+            scores, targets, use_binary=True, is_tdc=self.is_tdc
+        )
+        return peps
+
+    def long_desc(self):
+        return "peps_by_qvality"
+
+
+@typechecked
+class KdeNNLSPepsAlgorithm(PepsAlgorithm):
+    def __init__(self, *, pi0_algo=None):
+        super().__init__(pi0_algo)
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        pi_factor = super().estimate_pi_factor(scores, targets)
+        peps = pepsmod.peps_from_scores_kde_nnls(scores, targets, pi_factor=pi_factor)
+        return peps
+
+    def long_desc(self):
+        return "peps_by_kde_nnls"
+
+
+@typechecked
+class HistNNLSPepsAlgorithm(PepsAlgorithm):
+    def __init__(self, *, pi0_algo=None):
+        super().__init__(pi0_algo)
+
+    def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
+        pi_factor = super().estimate_pi_factor(scores, targets)
+        peps = pepsmod.peps_from_scores_hist_nnls(scores, targets, pi_factor=pi_factor)
+        return peps
+
+    def long_desc(self):
+        return "peps_by_hist_nnls"
 
 
 # Configuration of algorithms via command line arguments
@@ -264,7 +366,7 @@ def configure_algorithms(config):
         case "storey_bootstrap":
             pi0_algorithm = StoreyPi0Algorithm("bootstrap", config.pi0_eval_lambda)
         case _:
-            raise NotImplementedError
+            raise ValueError(f"Unknown pi0 algorithm '{pi0_algorithm}'")
     Pi0EstAlgorithm.set_algorithm(pi0_algorithm)
 
     qvalue_algorithm = config.qvalue_algorithm
@@ -273,15 +375,38 @@ def configure_algorithms(config):
 
     match qvalue_algorithm:
         case "from_counts":
-            qvalue_algorithm = CountsQvalueAlgorithm(is_tdc, pi0_algo=pi0_algorithm)
+            qvalue_algorithm = CountsQvalueAlgorithm(
+                is_tdc=is_tdc, pi0_algo=pi0_algorithm
+            )
         case "storey":
             qvalue_algorithm = StoreyQvalueAlgorithm(pi0_algo=pi0_algorithm)
         case _:
-            raise NotImplementedError
+            raise ValueError(f"Unknown qvalue algorithm '{qvalue_algorithm}'")
     QvalueAlgorithm.set_algorithm(qvalue_algorithm)
+
+    peps_algorithm = config.peps_algorithm
+    match peps_algorithm:
+        case "qvality":
+            peps_algorithm = TriqlerPepsAlgorithm(pi0_algo=pi0_algorithm)
+        case "qvality_bin":
+            # todo: maybe show message if this is not the default pi0 algo, cause
+            #   we cannot set pi0 for qvality
+            peps_algorithm = QvalityPepsAlgorithm(is_tdc=is_tdc)
+        case "kde_nnls":
+            peps_algorithm = KdeNNLSPepsAlgorithm(pi0_algo=pi0_algorithm)
+        case "hist_nnls":
+            peps_algorithm = HistNNLSPepsAlgorithm(pi0_algo=pi0_algorithm)
+        case _:
+            raise ValueError(f"Unknown peps algorithm '{peps_algorithm}'")
+    PepsAlgorithm.set_algorithm(peps_algorithm)
+    PepsAlgorithm.peps_error = config.peps_error
 
     LOGGER.debug(f"pi0 algorithm: {pi0_algorithm.long_desc()}")
     LOGGER.debug(f"q-value algorithm: {qvalue_algorithm.long_desc()}")
+    LOGGER.debug(f"peps algorithm: {peps_algorithm.long_desc()}")
 
 
-QvalueAlgorithm.set_algorithm(CountsQvalueAlgorithm(True, TDCPi0Algorithm()))
+QvalueAlgorithm.set_algorithm(
+    CountsQvalueAlgorithm(is_tdc=True, pi0_algo=TDCPi0Algorithm())
+)
+PepsAlgorithm.set_algorithm(TriqlerPepsAlgorithm(pi0_algo=TDCPi0Algorithm()))
