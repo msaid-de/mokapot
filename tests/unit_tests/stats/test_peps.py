@@ -51,7 +51,7 @@ def test_peps_qvality(is_tdc, rho0):
     scores, targets, is_fd = model.sample_scores(N)
 
     peps_values = peps.peps_from_scores_qvality(
-        scores, targets, is_tdc=False, use_binary=True
+        scores, targets, is_tdc=False, use_binary=False
     )
     assert peps_are_valid(peps_values, scores=scores)
 
