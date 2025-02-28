@@ -7,7 +7,7 @@ from typeguard import typechecked
 from mokapot.cli_helper import make_timer
 from mokapot.column_defs import STANDARD_COLUMN_NAME_MAP
 from mokapot.confidence import compute_and_write_confidence
-from mokapot.statistics import OnlineStatistics
+from mokapot.stats.statistics import OnlineStatistics
 from mokapot.tabular_data import (
     auto_finalize,
     BufferType,
@@ -210,10 +210,8 @@ def do_rollup(config):
             compute_and_write_confidence(
                 temp_reader,
                 writer,
-                config.peps_algorithm,
                 config.stream_confidence,
                 score_stats,
-                peps_error=True,
                 level=level,
                 eval_fdr=0.01,
             )

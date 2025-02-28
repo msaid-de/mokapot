@@ -4,33 +4,20 @@ This module estimates q-values.
 
 from typing import Callable
 
-import numba as nb
 import numpy as np
 from typeguard import typechecked
 
-from mokapot.peps import (
-    estimate_pi0_by_slope,
-    hist_data_from_scores,
-    monotonize_simple,
-    peps_from_scores_hist_nnls,
-    TDHistData,
-)
-
-QVALUE_ALGORITHM = {
-    "tdc": lambda scores, targets: tdc(scores, targets, desc=True),
-    "from_peps": lambda scores, targets: qvalues_from_peps(
-        scores, targets, is_tdc=True
-    ),
-    "from_counts": lambda scores, targets: qvalues_from_counts(
-        scores, targets, is_tdc=True
-    ),
-}
+import mokapot.stats.pi0est
+import mokapot.stats.pvalues as pvalues
+from mokapot.stats.histdata import TDHistData
+from mokapot.stats.monotonize import monotonize_simple
+from mokapot.stats.pi0est import pi0_from_pvalues_storey
 
 
 @typechecked
-def tdc(
-    scores: np.ndarray[np.floating | np.integer],
-    target: np.ndarray[bool | np.floating | np.integer],
+def qvalues_from_counts_tdc(
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
     desc: bool = True,
 ):
     """Estimate q-values using target decoy competition.
@@ -58,7 +45,7 @@ def tdc(
     ----------
     scores : numpy.ndarray of float
         A 1D array containing the score to rank by
-    target : numpy.ndarray of bool
+    targets : numpy.ndarray of bool
         A 1D array indicating if the entry is from a target or decoy
         hit. This should be boolean, where `True` indicates a target
         and `False` indicates a decoy. `target[i]` is the label for
@@ -78,138 +65,15 @@ def tdc(
     # should me maximally integer|floating (but better just float) and targets
     # should only be bool, nothing else. The rest is the job of the calling code.
 
-    scores = np.array(scores)
-    target = np.array(target)
-
-    if scores.shape[0] != target.shape[0]:
-        raise ValueError("'scores' and 'target' must be the same length")
-
-    # Sort and estimate FDR
-    if desc:
-        srt_idx = np.argsort(-scores)
-    else:
-        srt_idx = np.argsort(scores)
-
-    scores = scores[srt_idx]
-    target = target[srt_idx]
-    cum_targets = target.cumsum()
-    cum_decoys = ((target - 1) ** 2).cumsum()
-    num_total = cum_targets + cum_decoys
-
-    # Handles zeros in denominator
-    fdr = np.divide(
-        (cum_decoys + 1),
-        cum_targets,
-        out=np.ones_like(cum_targets, dtype=np.float32),
-        where=(cum_targets != 0),
-    )
-
-    # Calculate q-values
-    unique_metric, indices = np.unique(scores, return_counts=True)
-
-    # Some arrays need to be flipped so that we can loop through from
-    # worse to best score.
-    fdr = np.flip(fdr)
-    num_total = np.flip(num_total)
-    if not desc:
-        unique_metric = np.flip(unique_metric)
-        indices = np.flip(indices)
-
-    qvals = _fdr2qvalue(fdr, num_total, unique_metric, indices)
-    qvals = np.flip(qvals)
-    qvals = qvals[np.argsort(srt_idx)]
-
-    return qvals
-
-
-@nb.njit
-def _fdr2qvalue(fdr, num_total, met, indices):
-    """Quickly turn a list of FDRs to q-values.
-
-    All of the inputs are assumed to be sorted.
-
-    Parameters
-    ----------
-    fdr : numpy.ndarray
-        A vector of all unique FDR values.
-    num_total : numpy.ndarray
-        A vector of the cumulative number of PSMs at each score.
-    met : numpy.ndarray
-        A vector of the scores for each PSM.
-    indices : tuple of numpy.ndarray
-        Tuple where the vector at index i indicates the PSMs that
-        shared the unique FDR value in `fdr`.
-
-    Returns
-    -------
-    numpy.ndarray
-        A vector of q-values.
-    """
-    min_q = 1
-    qvals = np.ones(len(fdr))
-    group_fdr = np.ones(len(fdr))
-    prev_idx = 0
-    for idx in range(met.shape[0]):
-        next_idx = prev_idx + indices[idx]
-        group = slice(prev_idx, next_idx)
-        prev_idx = next_idx
-
-        fdr_group = fdr[group]
-        n_group = num_total[group]
-        curr_fdr = fdr_group[np.argmax(n_group)]
-        if curr_fdr < min_q:
-            min_q = curr_fdr
-
-        group_fdr[group] = curr_fdr
-        qvals[group] = min_q
-
-    return qvals
-
-
-@typechecked
-def qvalues_from_scores(
-    scores: np.ndarray[float],
-    targets: np.ndarray[bool],
-    qvalue_algorithm: str = "tdc",
-):
-    """Compute q-values from scores.
-
-    Parameters
-    ----------
-    scores:
-        A numpy array containing the scores for each target and decoy peptide.
-    targets:
-        A boolean array indicating whether each peptide is a target (True) or a
-        decoy (False).
-    qvalue_algorithm:
-        The q-value calculation algorithm to use. Defaults to 'tdc' (mokapot
-        builtin).
-
-    Returns
-    -------
-    array:
-        The q-values calculated using the specified algorithm.
-
-    Raises
-    ------
-    ValueError
-        If the specified algorithm is unknown.
-    """
-    qvalue_function = QVALUE_ALGORITHM[qvalue_algorithm]
-    if qvalue_function is not None:
-        return qvalue_function(scores, targets)
-    else:
-        raise ValueError(
-            "Unknown qvalue algorithm in qvalues_from_scores:" f" {qvalue_algorithm}"
-        )
+    # todo: should be removed and only qvalues_from_counts be used
+    return qvalues_from_counts(scores, targets, pi_factor=1.0, desc=desc)
 
 
 @typechecked
 def qvalues_from_peps(
     scores: np.ndarray[float],
     targets: np.ndarray[bool],
-    is_tdc: bool,
-    peps: np.ndarray[float] | None = None,
+    peps: np.ndarray[float],
 ):
     r"""Compute q-values from peps.
 
@@ -238,17 +102,12 @@ def qvalues_from_peps(
         Array-like object representing the posterior error probabilities
         associated with the peptides. Default is None (then it's computed via
         the HistNNLS algorithm).
-    is_tdc:
-        Scores and targets come from competition, rather than separate search.
 
     Returns
     -------
     array:
         Array of q-values computed from peps.
     """
-
-    if peps is None:
-        peps = peps_from_scores_hist_nnls(scores, targets, is_tdc)
 
     # We need to sort scores in descending order for the formula to work
     # (it involves to cumsum's from the maximum scores downwards)
@@ -270,7 +129,11 @@ def qvalues_from_peps(
 
 @typechecked
 def qvalues_from_counts(
-    scores: np.ndarray[float], targets: np.ndarray[bool], is_tdc: bool
+    scores: np.ndarray[float],
+    targets: np.ndarray[bool],
+    *,
+    desc: bool = True,
+    pi_factor: float = 1,
 ):
     r"""
     Compute qvalues from target/decoy counts.
@@ -308,22 +171,15 @@ def qvalues_from_counts(
     array:
         Array of q-values computed from peps.
     """
-
-    if is_tdc:
-        factor = 1
-    else:
-        hist_data = hist_data_from_scores(scores, targets)
-        eval_scores, target_density, decoy_density = hist_data.as_densities()
-        pi0 = estimate_pi0_by_slope(target_density, decoy_density)
-        target_decoy_ratio = targets.sum() / (~targets).sum()
-        factor = pi0 * target_decoy_ratio
+    if not desc:
+        scores = -scores
 
     # Sort by score, but take also care of multiple targets/decoys per score
     ind = np.lexsort((targets, -scores))
     targets_sorted = targets[ind]
     scores_sorted = scores[ind]
     fdr_sorted = (
-        factor
+        pi_factor
         * ((~targets_sorted).cumsum() + 1)
         / np.maximum(targets_sorted.cumsum(), 1)
     )
@@ -352,7 +208,7 @@ def qvalues_from_counts(
 
 @typechecked
 def qvalues_func_from_hist(
-    hist_data: TDHistData, is_tdc: bool
+    hist_data: TDHistData, pi_factor: float
 ) -> Callable[[np.ndarray[float]], np.ndarray[float]]:
     r"""Compute q-values from histogram counts.
 
@@ -380,15 +236,11 @@ def qvalues_func_from_hist(
     """
 
     _, target_counts, decoy_counts = hist_data.as_counts()
-    if is_tdc:
-        factor = 1
-    else:
-        factor = estimate_pi0_by_slope(target_counts, decoy_counts)
 
     targets_sum = np.flip(target_counts).cumsum()
     decoys_sum = np.flip(decoy_counts).cumsum()
 
-    fdr_flipped = factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
+    fdr_flipped = pi_factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
     fdr_flipped = np.clip(fdr_flipped, 0.0, 1.0)
     qvalues_flipped = monotonize_simple(fdr_flipped, ascending=True, reverse=True)
     qvalues = np.flip(qvalues_flipped)
@@ -445,27 +297,90 @@ def qvalues_from_storeys_algo(
         lower scores generally indicate a higher likelihood of being a
         target. The q-values are adjusted for multiple hypothesis testing.
     """
-    import mokapot.qvalues_storey as qvalues_storey
 
     stat1 = scores[targets]
     stat0 = scores[~targets]
 
-    pvals1 = qvalues_storey.empirical_pvalues(stat1, stat0, mode=pvalue_method)
+    pvals1 = pvalues.empirical_pvalues(stat1, stat0, mode=pvalue_method)
 
     if pi0 is None:
-        pi0est = qvalues_storey.estimate_pi0(pvals1, method="smoother", eval_lambda=0.5)
+        pi0est = mokapot.stats.pi0est.pi0_from_pvalues_storey(
+            pvals1, method="smoother", eval_lambda=0.5
+        )
         pi0 = pi0est.pi0
 
-    qvals1 = qvalues_storey.qvalues(pvals1, pi0=pi0, small_p_correction=False)
+    qvals1 = qvalues_from_pvalues(pvals1, pi0=pi0, small_p_correction=False)
 
     if decoy_qvals_by_interp:
         ind = np.argsort(stat1)
         qvals0 = np.interp(stat0, stat1[ind], qvals1[ind])
     else:
-        pvals0 = qvalues_storey.empirical_pvalues(stat0, stat0, mode=pvalue_method)
-        qvals0 = qvalues_storey.qvalues(pvals0, pi0=1)
+        pvals0 = pvalues.empirical_pvalues(stat0, stat0, mode=pvalue_method)
+        qvals0 = qvalues_from_pvalues(pvals0, pi0=1)
 
     qvals = np.zeros_like(scores, dtype=float)
     qvals[targets] = qvals1
     qvals[~targets] = qvals0
     return qvals
+
+
+@typechecked
+def qvalues_from_pvalues(
+    pvals: np.ndarray[float],
+    *,
+    pi0: float | None = None,
+    small_p_correction: bool = False,
+) -> np.ndarray[float]:
+    """
+    Calculates q-values, which are an estimate of false discovery rates (FDR),
+    for an array of p-values. This function is based on Storey's implementation
+    in the R package "qvalue".
+
+    Parameters
+    ----------
+    pvals : np.ndarray[float]
+        An array of p-values to compute q-values for. The array should contain
+        values between 0 and 1.
+    pi0 : float, optional
+        Proportion of true null hypotheses. If not provided, it is estimated
+        using the bootstrap method (see estimate_pi0).
+    small_p_correction : bool, optional
+        Whether to apply a small p-value correction (Storey's pfdr parameter),
+        which adjusts for very small p-values in the dataset.
+
+    Returns
+    -------
+    np.ndarray[float]
+        An array of q-values corresponding to the input p-values. The q-values
+        are within the range [0, 1].
+
+    References
+    ----------
+    .. [1] John D. Storey, Robert Tibshirani, Statistical significance for
+        genomewide studies,pp. 9440 –9445 PNAS August 5, 2003, vol. 100, no. 16
+        www.pnas.org/cgi/doi/10.1073/pnas.1530509100
+    .. [2] John D. Storey, A direct approach to false discovery rates,
+        J. R. Statist. Soc. B (2002), 64, Part 3, pp. 479–498
+    .. [3] Storey JD, Bass AJ, Dabney A, Robinson D (2024). qvalue: Q-value
+        estimation for false discovery rate control. R package version 2.38.0,
+        http://github.com/jdstorey/qvalue.
+    """
+    N = len(pvals)
+    order = np.argsort(pvals)
+    pvals_sorted = pvals[order]
+    if pi0 is None:
+        pi0 = pi0_from_pvalues_storey(pvals, method="bootstrap")
+
+    fdr_sorted = pi0 * pvals_sorted * N / np.linspace(1, N, N)
+    if small_p_correction:
+        fdr_sorted /= 1 - (1 - pvals) ** N
+
+    # Note that the monotonization takes also correctly care of repeated pvalues
+    # so that they always get the same qvalue
+    qvalues_sorted = monotonize_simple(fdr_sorted, ascending=True, reverse=True)
+
+    qvalues = np.zeros_like(qvalues_sorted)
+    qvalues[order] = qvalues_sorted
+
+    qvalues = np.clip(qvalues, 0.0, 1.0)
+    return qvalues

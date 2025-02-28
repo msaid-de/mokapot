@@ -11,16 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
+from mokapot.brew import brew
+from mokapot.cli_helper import setup_logging
+from mokapot.confidence import assign_confidence
+from mokapot.config import create_config_parser
+from mokapot.model import load_model, PercolatorModel
+from mokapot.parsers.fasta import read_fasta
+from mokapot.parsers.pin import read_pin
+from mokapot.stats.algorithms import configure_algorithms
+from mokapot.typecheck import register_numpy_typechecker
 from . import __version__
-from .algorithms import configure_algorithms
-from .brew import brew
-from .cli_helper import setup_logging
-from .confidence import assign_confidence
-from .config import create_config_parser
-from .model import load_model, PercolatorModel
-from .parsers.fasta import read_fasta
-from .parsers.pin import read_pin
-from .typecheck import register_numpy_typechecker
 
 
 def main(main_args=None):
@@ -134,8 +134,6 @@ def main(main_args=None):
         deduplication=not config.skip_deduplication,
         do_rollup=not config.skip_rollup,
         proteins=proteins,
-        peps_error=config.peps_error,
-        peps_algorithm=config.peps_algorithm,
         sqlite_path=config.sqlite_db_path,
         stream_confidence=config.stream_confidence,
     )

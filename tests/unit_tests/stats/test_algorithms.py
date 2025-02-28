@@ -1,12 +1,12 @@
 import numpy as np
 import pytest
 
-from mokapot.algorithms import (
+from mokapot.stats.algorithms import (
     StoreyQvalueAlgorithm,
     TDCPi0Algorithm,
 )
-from mokapot.qvalues import tdc
-from ..helpers.math import estimate_abs_int
+from mokapot.stats.qvalues import qvalues_from_counts_tdc
+from tests.helpers.math import estimate_abs_int
 
 
 @pytest.mark.parametrize("desc", [True, False])
@@ -37,14 +37,14 @@ def test_qvalue_algos(N, desc, discrete, pi0):
     if not desc:
         scores = -scores
 
-    qvals = tdc(scores, targets, desc)
+    qvals = qvalues_from_counts_tdc(scores, targets, desc)
     pi0algo_ratio = TDCPi0Algorithm()
     # pi0algo_smoother = StoreyPi0Algorithm("smoother", eval_lambda=0.5)
     # pi0algo_fixed = StoreyPi0Algorithm("fixed", eval_lambda=0.5)
     # algo = StoreyQvalueAlgorithm(pi0_algo=pi0algo_fixed)
     # algo = StoreyQvalueAlgorithm(pi0_algo=pi0algo_smoother)
     algo = StoreyQvalueAlgorithm(pi0_algo=pi0algo_ratio)
-    qvals2 = algo.qvalues(scores, targets, desc)
+    qvals2 = algo.estimate(scores, targets, desc)
 
     np.testing.assert_allclose(qvals[targets], qvals2[targets], atol=0.001)
     np.testing.assert_allclose(qvals[decoys], qvals2[decoys], atol=0.1)
