@@ -11,6 +11,7 @@ maybe by some algorithm registry.
 from __future__ import annotations
 
 import logging
+import warnings
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -197,9 +198,8 @@ class QvalueAlgorithm(ABC, Pi0EstimationMixin):
 
 @typechecked
 class CountsQvalueAlgorithm(QvalueAlgorithm):
-    def __init__(self, *, is_tdc: bool, pi0_algo: Pi0EstAlgorithm):
+    def __init__(self, *, pi0_algo: Pi0EstAlgorithm):
         super().__init__(pi0_algo)
-        self.tdc = is_tdc
 
     def estimate(
         self, scores: np.ndarray[float], targets: np.ndarray[bool], desc: bool
@@ -300,6 +300,12 @@ class TriqlerPepsAlgorithm(PepsAlgorithm):
 class QvalityPepsAlgorithm(PepsAlgorithm):
     def __init__(self, *, is_tdc=True):
         self.is_tdc = is_tdc
+        if not pepsmod.is_qvality_on_path():
+            raise ValueError(
+                "The `qvality` binary is not on the path or not executable"
+            )
+
+        # todo: Test here, whether qvality executable is available...
 
     def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
         peps = pepsmod.peps_from_scores_qvality(
@@ -375,9 +381,7 @@ def configure_algorithms(config):
 
     match qvalue_algorithm:
         case "from_counts":
-            qvalue_algorithm = CountsQvalueAlgorithm(
-                is_tdc=is_tdc, pi0_algo=pi0_algorithm
-            )
+            qvalue_algorithm = CountsQvalueAlgorithm(pi0_algo=pi0_algorithm)
         case "storey":
             qvalue_algorithm = StoreyQvalueAlgorithm(pi0_algo=pi0_algorithm)
         case _:
@@ -386,11 +390,14 @@ def configure_algorithms(config):
 
     peps_algorithm = config.peps_algorithm
     match peps_algorithm:
-        case "qvality":
+        case "triqler":
             peps_algorithm = TriqlerPepsAlgorithm(pi0_algo=pi0_algorithm)
-        case "qvality_bin":
-            # todo: maybe show message if this is not the default pi0 algo, cause
-            #   we cannot set pi0 for qvality
+        case "qvality":
+            if config.pi0_algorithm != "default":
+                warnings.warn(
+                    "PEPs-algorithm `qvality` cannot use pi0-algorithm "
+                    f"'{config.pi0_algorithm}', but will only use its internal one."
+                )
             peps_algorithm = QvalityPepsAlgorithm(is_tdc=is_tdc)
         case "kde_nnls":
             peps_algorithm = KdeNNLSPepsAlgorithm(pi0_algo=pi0_algorithm)
@@ -406,7 +413,6 @@ def configure_algorithms(config):
     LOGGER.debug(f"peps algorithm: {peps_algorithm.long_desc()}")
 
 
-QvalueAlgorithm.set_algorithm(
-    CountsQvalueAlgorithm(is_tdc=True, pi0_algo=TDCPi0Algorithm())
-)
-PepsAlgorithm.set_algorithm(TriqlerPepsAlgorithm(pi0_algo=TDCPi0Algorithm()))
+Pi0EstAlgorithm.set_algorithm(TDCPi0Algorithm())
+QvalueAlgorithm.set_algorithm(CountsQvalueAlgorithm(pi0_algo=Pi0EstAlgorithm.pi0_algo))
+PepsAlgorithm.set_algorithm(TriqlerPepsAlgorithm(pi0_algo=Pi0EstAlgorithm.pi0_algo))

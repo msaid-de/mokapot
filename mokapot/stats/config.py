@@ -23,10 +23,10 @@ def add_config_args(parser: argparse.ArgumentParser):
 
     parser.add_argument(
         "--peps_algorithm",
-        default="qvality",
-        choices=["qvality", "qvality_bin", "kde_nnls", "hist_nnls"],
+        default="triqler",
+        choices=["triqler", "qvality", "kde_nnls", "hist_nnls"],
         help=(
-            "Specify the algorithm for pep computation. 'qvality_bin' works "
+            "Specify the algorithm for pep computation. 'qvality' works "
             "only if the qvality binary is on the search path"
         ),
     )
