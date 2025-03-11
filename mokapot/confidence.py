@@ -631,7 +631,7 @@ def compute_and_write_confidence(
             )
         )
         hist_data = TDHistData.from_score_target_iterator(
-            bin_edges, score_target_iterator
+            score_target_iterator, bin_edges
         )
         if hist_data.decoys.counts.sum() == 0:
             LOGGER.warning(

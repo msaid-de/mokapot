@@ -9,7 +9,7 @@ import numpy as np
 from triqler import qvality
 from typeguard import typechecked
 
-from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.monotonize import fit_nnls, monotonize_nnls
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope
 from mokapot.stats.utils import pdfs_from_scores
@@ -227,7 +227,7 @@ def peps_from_scores_hist_nnls(
         Array of PEP estimates at the scores of interest.
     """
 
-    hist_data = hist_data_from_scores(scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets)
     peps_func = peps_func_from_hist_nnls(
         hist_data, pi_factor, scale_to_one, weight_exponent
     )

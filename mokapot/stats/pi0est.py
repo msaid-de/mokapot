@@ -8,7 +8,7 @@ import numpy as np
 import scipy as sp
 from typeguard import typechecked
 
-from mokapot.stats.histdata import hist_data_from_scores
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.pvalues import empirical_pvalues
 
 LOGGER = logging.getLogger(__name__)
@@ -239,7 +239,7 @@ def pi0est_from_scores_by_slope(
         scores, targets, and density slope threshold.
 
     """
-    hist_data = hist_data_from_scores(scores, targets, bins=bins)
+    hist_data = TDHistData.from_scores(bins, scores, targets)
     hist_data.as_densities()
     _, target_density, decoy_density = hist_data.as_densities()
     return pi0_from_pdfs_by_slope(

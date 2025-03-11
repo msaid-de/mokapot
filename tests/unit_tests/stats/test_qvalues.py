@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.peps import peps_from_scores_hist_nnls
 from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.qvalues import (
@@ -202,7 +202,7 @@ def test_qvalues_from_hist_desc(desc_scores):
     bin_edges = np.linspace(0, 11, num=371)
     bin_edges = np.unique(np.sort(np.concatenate((bin_edges, scores))))
 
-    hist_data = TDHistData.from_scores_targets(bin_edges, scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets, bin_edges)
     qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=1)
     qvals = qvalue_func(scores)
 
@@ -214,7 +214,7 @@ def test_compare_rand_qvalues_from_hist_vs_count(rand_scores_stds, pi_factor):
     # Compare the q-values computed via counts with those computed via
     # histogram on a dataset of a few thousand random scores
     scores, targets, _ = rand_scores_stds
-    hist_data = hist_data_from_scores(scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets)
     qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=pi_factor)
     qvals_hist = qvalue_func(scores)
     qvals_counts = qvalues_from_counts(scores, targets, pi_factor=pi_factor)

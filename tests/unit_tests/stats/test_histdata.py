@@ -4,9 +4,8 @@ from pytest import approx
 from typeguard import TypeCheckError
 
 from mokapot.stats.histdata import (
-    hist_data_from_iterator,
-    hist_data_from_scores,
     HistData,
+    TDHistData,
 )
 from mokapot.stats.statistics import OnlineStatistics
 
@@ -19,19 +18,21 @@ def test_hist_data_from_iterator():
         for i in range(0, len(scores), chunksize):
             yield scores[i : i + chunksize], targets[i : i + chunksize]
 
-    bins = np.histogram_bin_edges(scores, bins=31)
-    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_counts()
-    e1, t1, d1 = hist_data_from_iterator(
-        score_iterator(scores, targets), bin_edges=bins
+    bin_edges = np.histogram_bin_edges(scores, bins=31)
+    e0, t0, d0 = TDHistData.from_scores_targets(scores, targets, bin_edges).as_counts()
+    e1, t1, d1 = TDHistData.from_score_target_iterator(
+        score_iterator(scores, targets), bin_edges
     ).as_counts()
     assert e0 == approx(e1)
     assert t0 == approx(t1)
     assert d0 == approx(d1)
 
-    bins = np.histogram_bin_edges(scores, bins=17)
-    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_densities()
-    e1, t1, d1 = hist_data_from_iterator(
-        score_iterator(scores, targets, chunksize=7), bin_edges=bins
+    bin_edges = np.histogram_bin_edges(scores, bins=17)
+    e0, t0, d0 = TDHistData.from_scores_targets(
+        scores, targets, bin_edges
+    ).as_densities()
+    e1, t1, d1 = TDHistData.from_score_target_iterator(
+        score_iterator(scores, targets, chunksize=7), bin_edges
     ).as_densities()
     assert e0 == approx(e1)
     assert t0 == approx(t1)
