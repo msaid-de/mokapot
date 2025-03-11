@@ -48,6 +48,41 @@ class HistData:
         counts, _ = np.histogram(data, bins=self.bin_edges)
         self.counts += counts
 
+    def coarsen(self, factor: int) -> HistData:
+        """
+        Coarsens the histogram by a specified factor.
+
+        This method reduces the resolution of the histogram by combining adjacent
+        bins into groups based on the specified `factor`. Bin counts are summed,
+        and edges are adjusted to form the new coarsened histogram.
+
+        Parameters
+        ----------
+        factor:
+            The coarsening factor. It combines this many adjacent bins into a single
+            one. Must be a positive integer and a divisor of the number of counts.
+
+        Returns
+        -------
+        HistData
+            A new `HistData` instance representing the coarsened histogram.
+
+        Raises
+        ------
+        ValueError
+            If the coarsening factor is not valid for the current histogram.
+        """
+        if factor <= 0 or len(self.counts) % factor != 0:
+            raise ValueError("Factor must be a positive divisor of the number of bins.")
+
+        # Reshape counts to group bins by the given factor and sum them
+        coarsened_counts = self.counts.reshape(-1, factor).sum(axis=1)
+
+        # Create new coarsened bin edges
+        coarsened_edges = self.bin_edges[::factor]
+
+        return HistData(coarsened_edges, coarsened_counts)
+
     @property
     def bin_centers(self) -> np.ndarray[float]:
         """
@@ -319,3 +354,11 @@ class TDHistData:
             self.targets.density,
             self.decoys.density,
         )
+
+    def coarsen(self, factor: int) -> TDHistData:
+        # Create a new TDHistData instance bypassing init ...
+        coarsened_data = TDHistData.__new__(TDHistData)
+        # because we later set the members explicitly anyway
+        coarsened_data.targets = self.targets.coarsen(factor)
+        coarsened_data.decoys = self.decoys.coarsen(factor)
+        return coarsened_data
