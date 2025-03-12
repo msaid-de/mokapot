@@ -6,6 +6,7 @@ import json
 
 import numpy as np
 import pytest
+from pytest import approx
 from scipy import stats
 
 from mokapot.stats.histdata import TDHistData
@@ -21,6 +22,7 @@ from mokapot.stats.qvalues import (
 )
 from mokapot.stats.tdmodel import STDSModel
 from tests.helpers.utils import TestOutcome
+from unit_tests.stats.helpers import create_tdmodel
 
 
 @pytest.fixture
@@ -248,3 +250,30 @@ def test_qvalues_storey():
     )
     qvals = qvalues_from_pvalues(pvals, pi0=pi0est.pi0)
     np.testing.assert_almost_equal(qvals, qvals_expect)
+
+
+@pytest.mark.parametrize("rho0", [0.1, 0.3, 0.8])
+@pytest.mark.parametrize("discrete", [True, False])
+@pytest.mark.parametrize("is_tdc", [True, False])
+def test_qvalues_from_hist_on_tdmodel(is_tdc, discrete, rho0):
+    model = create_tdmodel(is_tdc, rho0, discrete, delta=2, max_dev_z=10)
+    N = 10000
+    scores, targets, is_fd = model.sample_scores(N)
+    if discrete:
+        # If the discrete values are not uniformly spaces, this makes it harder
+        # for the qvalue function. Otherwise, certain issues/bugs are not caught.
+        scores = scores**1.1
+
+    pi0 = model.pi0_from_data(targets, is_fd)
+    pi_factor = pi0 * sum(~targets) / sum(targets)
+
+    import mokapot.stats.qvalues as qvalues
+
+    qvals0 = qvalues.qvalues_from_counts(scores, targets, pi_factor=pi_factor)
+
+    bin_edges = np.histogram_bin_edges(scores, bins=1000)
+    histdata = TDHistData.from_scores_targets(scores, targets, bin_edges=bin_edges)
+    qvfunc = qvalues.qvalues_func_from_hist(histdata, pi_factor=pi_factor)
+    qvals1 = qvfunc(scores)
+
+    assert qvals1 == approx(qvals0, abs=0.01)

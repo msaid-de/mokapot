@@ -240,17 +240,16 @@ def qvalues_func_from_hist(
     targets_sum = np.flip(target_counts).cumsum()
     decoys_sum = np.flip(decoy_counts).cumsum()
 
+    # We need to append the last value once for the last bin_edge
+    targets_sum = np.append(targets_sum, targets_sum[-1])
+    decoys_sum = np.append(decoys_sum, decoys_sum[-1])
+
     fdr_flipped = pi_factor * (decoys_sum + 1) / np.maximum(targets_sum, 1)
     fdr_flipped = np.clip(fdr_flipped, 0.0, 1.0)
     qvalues_flipped = monotonize_simple(fdr_flipped, ascending=True, reverse=True)
     qvalues = np.flip(qvalues_flipped)
 
-    # We need to append zero to end of the qvalues for right edge of the last
-    # bin, the other q-values correspond to the left edges of the bins
-    # (because of the >= in the formula for the counts)
-    qvalues = np.append(qvalues, qvalues[-1])
     eval_scores = hist_data.targets.bin_edges
-
     return lambda scores: np.interp(scores, eval_scores, qvalues)
 
 
