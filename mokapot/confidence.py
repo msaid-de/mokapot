@@ -624,7 +624,12 @@ def compute_and_write_confidence(
 
     else:  # Here comes the streaming part
         LOGGER.info("Computing statistics for q-value and PEP assignment...")
-        bin_edges = HistData.get_bin_edges(score_stats, clip=(50, 500))
+        # bin_edges = HistData.get_bin_edges(score_stats, clip=(50, 500))
+        base_bins = 200
+        factor = 10
+        bin_edges = HistData.get_bin_edges(
+            score_stats, clip=(base_bins * factor, base_bins * factor)
+        )
         score_target_iterator = create_score_target_iterator(
             temp_reader.get_chunked_data_iterator(
                 chunk_size=CONFIDENCE_CHUNK_SIZE, columns=["score", "is_decoy"]
@@ -643,7 +648,8 @@ def compute_and_write_confidence(
         # todo: check that pi_factor thingy...
         # Should also use the "algorithms"
         qvalues_func = qvalues_func_from_hist(hist_data, pi_factor=1.0)
-        peps_func = peps_func_from_hist_nnls(hist_data, pi_factor=1.0)
+        hist_data2 = hist_data.coarsen(factor)
+        peps_func = peps_func_from_hist_nnls(hist_data2, pi_factor=1.0)
 
         LOGGER.info("Streaming q-value and PEP assignments...")
         for df_chunk in temp_reader.get_chunked_data_iterator(

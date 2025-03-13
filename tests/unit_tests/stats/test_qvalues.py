@@ -22,7 +22,7 @@ from mokapot.stats.qvalues import (
 )
 from mokapot.stats.tdmodel import STDSModel
 from tests.helpers.utils import TestOutcome
-from unit_tests.stats.helpers import create_tdmodel
+from .helpers import create_tdmodel
 
 
 @pytest.fixture
