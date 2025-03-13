@@ -299,7 +299,7 @@ class TDHistData:
         if isinstance(bin_edges, np.ndarray):
             bin_edges = bin_edges
         else:
-            bin_edges = np.histogram_bin_edges(scores, bins=bin_edges or "scott")
+            bin_edges = np.histogram_bin_edges(scores, bins=bin_edges or 2000)
 
         td_hist_data = TDHistData(bin_edges)
         td_hist_data.update(scores, targets)
