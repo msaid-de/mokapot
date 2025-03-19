@@ -259,17 +259,18 @@ class PepsAlgorithm(ABC, Pi0EstimationMixin):
         try:
             peps = cls.peps_algo.estimate(scores, targets)
         except pepsmod.PepsConvergenceError:
-            LOGGER.info(
+            LOGGER.warning(
                 f"\t- Encountered convergence problems in `{cls.peps_algo}`. "
-                "Falling back to qvality ...",
+                "Falling back to triqler ...",
             )
-            pi0 = Pi0EstAlgorithm.estimate(scores, targets)
-            peps = pepsmod.peps_from_scores_qvality(
-                scores, targets, use_binary=False, pi0=pi0
-            )
+            peps_algo = TriqlerPepsAlgorithm(pi0_algo=Pi0EstAlgorithm.pi0_algo)
+            peps = peps_algo.estimate(scores, targets)
 
-        if cls.peps_error and all(peps == 1):
-            raise ValueError("PEP values are all equal to 1.")
+        if all(peps == 1):
+            if cls.peps_error:
+                raise ValueError("PEP values are all equal to 1.")
+            else:
+                LOGGER.warning("PEP values are all equal to 1.")
 
         return peps
 
@@ -304,8 +305,6 @@ class QvalityPepsAlgorithm(PepsAlgorithm):
             raise ValueError(
                 "The `qvality` binary is not on the path or not executable"
             )
-
-        # todo: Test here, whether qvality executable is available...
 
     def estimate(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
         peps = pepsmod.peps_from_scores_qvality(

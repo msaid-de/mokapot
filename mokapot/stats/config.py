@@ -1,7 +1,5 @@
 import argparse
 
-# todo: change to pydantic based configuration
-
 
 def add_config_args(parser: argparse.ArgumentParser):
     parser.add_argument(
@@ -17,7 +15,7 @@ def add_config_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--peps_error",
         default=False,
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help="Raise error when all PEPs values are equal to 1.",
     )
 
