@@ -32,10 +32,6 @@ from mokapot.dataset import OnDiskPsmDataset
 from mokapot.picked_protein import picked_protein
 from mokapot.stats.algorithms import PepsAlgorithm, QvalueAlgorithm
 from mokapot.stats.histdata import HistData, TDHistData
-from mokapot.stats.peps import (
-    peps_func_from_hist_nnls,
-)
-from mokapot.stats.qvalues import qvalues_func_from_hist
 from mokapot.stats.statistics import OnlineStatistics
 from mokapot.tabular_data import (
     BufferType,
@@ -644,13 +640,23 @@ def compute_and_write_confidence(
                 "Confidence estimates may be unreliable."
             )
 
-        LOGGER.info("Estimating q-value and PEP assignment functions...")
-        # todo: check that pi_factor thingy...
-        # Should also use the "algorithms"
-        qvalues_func = qvalues_func_from_hist(hist_data, pi_factor=1.0)
-        hist_data2 = hist_data.coarsen(factor)
-        peps_func = peps_func_from_hist_nnls(hist_data2, pi_factor=1.0)
+        # Estimate q-value function
+        LOGGER.info(
+            f"Estimating q-value assignment function for {level} "
+            f"(using {QvalueAlgorithm.long_desc()} algorithm) ..."
+        )
+        qvalues_func = QvalueAlgorithm.func_from_hist(hist_data)
 
+        # Estimate peps function
+        LOGGER.info(
+            f"Estimating PEPs assignment function for {level} "
+            f"(using {PepsAlgorithm.long_desc()} algorithm) ..."
+        )
+
+        hist_data2 = hist_data.coarsen(factor)
+        peps_func = PepsAlgorithm.func_from_hist(hist_data2)
+
+        # Assign q-values and PEPs
         LOGGER.info("Streaming q-value and PEP assignments...")
         for df_chunk in temp_reader.get_chunked_data_iterator(
             chunk_size=CONFIDENCE_CHUNK_SIZE

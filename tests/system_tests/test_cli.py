@@ -303,7 +303,8 @@ def test_cli_help():
     assert "--enzyme" in stdout
 
 
-def test_cli_algo_options(tmp_path, scope_files):
+@pytest.mark.parametrize("streaming", [True, False])
+def test_cli_algo_options(tmp_path, scope_files, streaming):
     """Test that algorithm options work."""
 
     def read_psms(root):
@@ -320,6 +321,7 @@ def test_cli_algo_options(tmp_path, scope_files):
         ("--test_fdr", 0.01),
         ("--subset_max_train", 400000),
         ("--max_iter", 10),
+        ("--stream_confidence" if streaming else "--no-stream_confidence"),
         "--ensemble",
         "--log_time",
         "--keep_decoys",

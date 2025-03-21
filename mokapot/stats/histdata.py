@@ -119,6 +119,14 @@ class HistData:
         counts = self.counts.astype(float)
         return counts / (dx * counts.sum())
 
+    def sample(self, size):
+        prob = self.counts / self.counts.sum()
+        bin_indices = np.random.choice(len(prob), size=size, p=prob)
+        samples = np.random.uniform(
+            low=self.bin_edges[bin_indices], high=self.bin_edges[bin_indices + 1]
+        )
+        return samples
+
     @staticmethod
     def bin_size_sturges(stats: OnlineStatistics) -> float:
         """
@@ -362,3 +370,8 @@ class TDHistData:
         coarsened_data.targets = self.targets.coarsen(factor)
         coarsened_data.decoys = self.decoys.coarsen(factor)
         return coarsened_data
+
+    def get_decoy_target_ratio(self) -> float:
+        target_count = self.targets.counts.sum()
+        decoy_count = self.decoys.counts.sum()
+        return decoy_count / target_count

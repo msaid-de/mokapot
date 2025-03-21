@@ -47,13 +47,6 @@ def main(main_args=None):
     # Configure confidence algorithms
     configure_algorithms(config)
 
-    # Check config parameter validity
-    if config.stream_confidence and config.peps_algorithm != "hist_nnls":
-        raise ValueError(
-            f"Streaming and PEPs algorithm `{config.peps_algorithm}` not "
-            "compatible. Use `--peps_algorithm=hist_nnls` instead.`"
-        )
-
     # Start analysis
     logging.info("Command issued:")
     logging.info("%s", " ".join(sys.argv))

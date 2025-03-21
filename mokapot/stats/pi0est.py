@@ -88,7 +88,7 @@ def pi0_from_pvalues_storey(
     lambdas:
         An array of lambda values used to estimate pi0. Default is an array
         from 0.05 to 0.95 with step 0.05. For the meaning of lambda and eval_lambda
-        please the the paper [1].
+        please the paper [1].
     eval_lambda:
         A value of lambda used to evaluate pi0. Default is 0.5.
 
@@ -157,6 +157,107 @@ def pi0_from_pvalues_storey(
     pi0 = np.clip(pi0, 0, 1)
 
     return Pi0EstStorey(pi0, pi0s_smooth, pi0s_raw, lambdas, mse)
+
+
+@typechecked
+def pi0_from_hist_storey(
+    td_hist_data: TDHistData,
+    *,
+    method: Literal["smoother", "bootstrap", "fixed"] = "smoother",
+    lambdas: np.ndarray[float] = np.arange(0.2, 0.8, 0.01),
+    eval_lambda: float = 0.5,
+) -> float:
+    """
+    Estimate pi0 from p-value using Storey's method adapted to histograms.
+
+    Parameters
+    ----------
+    td_hist_data:
+        Target decoy histogram data.
+    method:
+        The method used for smoothing ('smoother' or 'bootstrap'). Default is
+        'smoother'.
+    lambdas:
+        An array of lambda values used to estimate pi0. Default is an array
+        from 0.05 to 0.95 with step 0.05. For the meaning of lambda and eval_lambda
+        please the paper [1].
+    eval_lambda:
+        A value of lambda used to evaluate pi0. Default is 0.5.
+
+    Returns
+    -------
+    float:
+        The estimated pi0 value.
+
+    References
+    ----------
+    .. [1] John D. Storey, Robert Tibshirani, Statistical significance for
+        genomewide studies,pp. 9440 –9445 PNAS August 5, 2003, vol. 100, no. 16
+        www.pnas.org/cgi/doi/10.1073/pnas.1530509100
+    .. [2] Storey JD, Bass AJ, Dabney A, Robinson D (2024). qvalue: Q-value
+        estimation for false discovery rate control. R package version 2.38.0,
+        http://github.com/jdstorey/qvalue.
+    """
+    # todo: it would be nice, though not untrivial, to integrate this function
+    #  with the normal Storey pi0 estimation function.
+
+    _, target_counts, decoy_counts = td_hist_data.as_counts()
+
+    targets_sum = np.flip(target_counts).cumsum()
+    decoys_sum = np.flip(decoy_counts).cumsum()
+    N = targets_sum[-1]
+
+    # We need to append the last value once for the last bin_edge
+    targets_sum = np.append(targets_sum, targets_sum[-1])
+    decoys_sum = np.append(decoys_sum, decoys_sum[-1])
+
+    lambdas = np.sort(lambdas)
+    pvals = decoys_sum / decoys_sum[-1]
+
+    def num_pvals_by_lambda(lmbda):
+        return np.interp(lmbda, pvals, targets_sum.max() - targets_sum)
+
+    assert min(pvals) >= 0 and max(pvals) <= 1
+    assert min(lambdas) >= 0 and max(lambdas) <= 1
+    assert len(lambdas) >= 4
+
+    if max(pvals) < max(lambdas):
+        LOGGER.warning(
+            f"The maximum p-value ({max(pvals)}) should be larger than the "
+            f"maximum lambda ({max(lambdas)})"
+        )
+
+    if method == "fixed":
+        # pvals_exceeding_lambda = sum(pvals >= eval_lambda)
+        pvals_exceeding_lambda = num_pvals_by_lambda(eval_lambda)
+
+        pi0 = pvals_exceeding_lambda / (N * (1.0 - eval_lambda))
+    else:
+        # Estimate raw pi0 values ("contaminated" for small lambdas by the true
+        # target distribution
+        W = num_pvals_by_lambda(lambdas)
+
+        pi0s_raw = W / (N * (1.0 - lambdas))
+
+        if method == "smoother":
+            # Now smooth it with a smoothing spline and evaluate
+            pi0_spline_est = sp.interpolate.UnivariateSpline(
+                lambdas, pi0s_raw, k=3, ext=0
+            )
+            pi0 = pi0_spline_est(eval_lambda)
+        elif method == "bootstrap":
+            pi0_min = np.quantile(pi0s_raw, 0.1)
+            mse = (
+                W / (N**2 * (1 - lambdas) ** 2) * (1 - W / N)
+                + (pi0s_raw - pi0_min) ** 2
+            )
+            pi0 = pi0s_raw[np.argmin(mse)]
+        else:
+            raise ValueError(f"Unknown pi0-estimation method {method}")
+
+    pi0 = np.clip(pi0, 0, 1)
+
+    return pi0
 
 
 def pi0_from_pdfs_by_slope(
@@ -318,7 +419,7 @@ def count_larger(pvals, lambdas):
 
 
 @typechecked
-def pi0_from_bootstrap(
+def pi0_from_scores_bootstrap(
     scores: np.ndarray[float], targets: np.ndarray[bool], N: int = 100000
 ) -> float:
     """
@@ -350,4 +451,38 @@ def pi0_from_bootstrap(
     """
     A = np.random.choice(scores[targets], size=N, replace=True)
     B = np.random.choice(scores[~targets], size=N, replace=True)
+    return 2 * (sum(B > A) + 0.5 * sum(B == A)) / N
+
+
+@typechecked
+def pi0_from_hist_bootstrap(td_hist_data: TDHistData, N: int = 100000) -> float:
+    """
+    Estimates the proportion of true null hypotheses (pi0) using bootstrapping.
+
+    This function calculates an estimate of pi0, the proportion of true null
+    hypotheses, based on bootstrap sampling. It takes as input an array of
+    scores, a boolean array indicating target values, and an optional number
+    of samples for the bootstrapping process. By performing resampling and
+    comparing scores between target true and target false groups, the function
+    computes a value proportional to the likelihood of scores from true null
+    hypothesis cases.
+
+    Parameters
+    ----------
+    scores : np.ndarray[float]
+        Array of scores corresponding to the data points.
+    targets : np.ndarray[bool]
+        Boolean array where True represents the target class, and False
+        represents the non-target class.
+    N : int, optional
+        The number of samples to be drawn for bootstrapping. The default is
+        100000.
+
+    Returns
+    -------
+    float
+        An estimate of the proportion of true null hypotheses (pi0).
+    """
+    A = td_hist_data.targets.sample(N)
+    B = td_hist_data.decoys.sample(N)
     return 2 * (sum(B > A) + 0.5 * sum(B == A)) / N

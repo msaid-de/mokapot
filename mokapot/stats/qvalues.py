@@ -383,3 +383,68 @@ def qvalues_from_pvalues(
 
     qvalues = np.clip(qvalues, 0.0, 1.0)
     return qvalues
+
+
+@typechecked
+def qvalues_func_from_hist_storey(
+    td_hist_data: TDHistData,
+    pi0: float,
+    *,
+    small_p_correction: bool = False,
+) -> Callable[[np.ndarray[float]], np.ndarray[float]]:
+    """
+    Calculates q-values, which are an estimate of false discovery rates (FDR),
+    for an array of p-values. This function is based on Storey's implementation
+    in the R package "qvalue" and modified to work on (approximately) on
+    histograms.
+
+    Parameters
+    ----------
+    td_hist_data : TDHistData
+        A TDHistData object.
+    pi0 : float
+        Proportion of true null hypotheses.
+    small_p_correction : bool, optional
+        Whether to apply a small p-value correction (Storey's pfdr parameter),
+        which adjusts for very small p-values in the dataset.
+
+    Returns
+    -------
+    function
+        A function that returns q-values given scores as input.
+
+    References
+    ----------
+    .. [1] John D. Storey, Robert Tibshirani, Statistical significance for
+        genomewide studies,pp. 9440 –9445 PNAS August 5, 2003, vol. 100, no. 16
+        www.pnas.org/cgi/doi/10.1073/pnas.1530509100
+    .. [2] John D. Storey, A direct approach to false discovery rates,
+        J. R. Statist. Soc. B (2002), 64, Part 3, pp. 479–498
+    .. [3] Storey JD, Bass AJ, Dabney A, Robinson D (2024). qvalue: Q-value
+        estimation for false discovery rate control. R package version 2.38.0,
+        http://github.com/jdstorey/qvalue.
+    """
+
+    _, target_counts, decoy_counts = td_hist_data.as_counts()
+
+    targets_sum = np.flip(target_counts).cumsum()
+    decoys_sum = np.flip(decoy_counts).cumsum()
+    N = targets_sum[-1]
+
+    # We need to append the last value once for the last bin_edge
+    targets_sum = np.append(targets_sum, targets_sum[-1])
+    decoys_sum = np.append(decoys_sum, decoys_sum[-1])
+
+    pvals = decoys_sum / decoys_sum[-1]
+    fdr = pi0 * pvals * N / np.maximum(targets_sum, 1)
+    if small_p_correction:
+        fdr /= 1 - (1 - pvals) ** N
+
+    # Note that the monotonization takes also correctly care of repeated pvalues
+    # so that they always get the same qvalue
+    qvalues = monotonize_simple(fdr, ascending=True, reverse=True)
+    qvalues = np.clip(qvalues, 0.0, 1.0)
+    qvalues = np.flip(qvalues)
+
+    eval_scores = td_hist_data.targets.bin_edges
+    return lambda scores: np.interp(scores, eval_scores, qvalues)

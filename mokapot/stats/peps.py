@@ -191,6 +191,7 @@ def peps_from_scores_hist_nnls(
     pi_factor: float = 1.0,
     scale_to_one: bool = False,
     weight_exponent: float = -1.0,
+    bin_edges: str | int | np.ndarray[float] | None = None,
 ):
     """Calculate the PEP (Posterior Error Probability) estimates from scores
     and targets using the NNLS (Non-negative Least Squares) method.
@@ -227,7 +228,7 @@ def peps_from_scores_hist_nnls(
         Array of PEP estimates at the scores of interest.
     """
 
-    hist_data = TDHistData.from_scores_targets(scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets, bin_edges)
     peps_func = peps_func_from_hist_nnls(
         hist_data, pi_factor, scale_to_one, weight_exponent
     )
