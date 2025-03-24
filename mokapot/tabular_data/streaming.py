@@ -218,6 +218,7 @@ class MergedTabularDataReader(TabularDataReader):
         self,
         columns: list[str] | None = None,
         row_type: BufferType = BufferType.DataFrame,
+        check_sorting: bool = True,
     ) -> Iterator[pd.DataFrame | dict | np.record]:
         # Define methods to iterate over dataframe, dicts or records and also
         # to get specific column values from each of those data structures
@@ -275,11 +276,41 @@ class MergedTabularDataReader(TabularDataReader):
 
         # Use builtin merge function for merging row_iterators using a
         # priority queue internally (O(1) lookup, O(log N) insert)
-        return heapq.merge(
+        merged_iter = heapq.merge(
             *row_iterators,
             key=lambda row: get_value(row, self.priority_column),
             reverse=self.descending,
         )
+
+        if not check_sorting:
+            return merged_iter
+
+        def checked_iter():
+            # Note: directly yielding from this function is terribly slow, while
+            # first wrapping the iteration and checking into a generator function
+            # is much faster. I don't know why exactly - maybe it needs less saving
+            # and restoring of context when returning to the generator from the
+            # caller - but that's just wild guessing.
+            last_value = None
+            for row in merged_iter:
+                new_value = get_value(row, self.priority_column)
+                if last_value is None:
+                    last_value = new_value
+                if self.descending and new_value > last_value:
+                    raise ValueError(
+                        f"New value {new_value} for {self.priority_column} exceeds "
+                        f"previous value {last_value} but should be descending."
+                    )
+                if not self.descending and new_value < last_value:
+                    raise ValueError(
+                        f"New value {new_value} for {self.priority_column} lower "
+                        f"than previous value {last_value} but should be ascending."
+                    )
+                last_value = new_value
+
+                yield row
+
+        return checked_iter()
 
     def get_chunked_data_iterator(
         self, chunk_size: int, columns: list[str] | None = None
@@ -325,8 +356,7 @@ def merge_readers(
         descending,
         reader_chunk_size=reader_chunk_size,
     )
-    iterator = reader.get_chunked_data_iterator(chunk_size=1)
-    return iterator
+    return reader.get_row_iterator()
 
 
 @typechecked
