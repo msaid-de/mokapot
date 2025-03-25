@@ -214,30 +214,26 @@ class Pi0EstimationMixin:
         self.pi0_algo = pi0_algo
 
     def estimate_pi0(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
-        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
-        pi0 = pi0_algo.estimate(scores, targets)
-        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
+        pi0 = self.pi0_algo.estimate(scores, targets)
+        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={self.pi0_algo.long_desc()}")
         return pi0
 
     def estimate_pi_factor(self, scores: np.ndarray[float], targets: np.ndarray[bool]):
-        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
-        pi_factor = pi0_algo.estimate_pi_factor(scores, targets)
+        pi_factor = self.pi0_algo.estimate_pi_factor(scores, targets)
         LOGGER.debug(
-            f"pi-factor estimate: pi_factor={pi_factor}, algo={pi0_algo.long_desc()}"
+            f"pi-factor est.: pi_factor={pi_factor}, algo={self.pi0_algo.long_desc()}"
         )
         return pi_factor
 
     def estimate_pi0_from_hist(self, td_hist_data: TDHistData) -> float:
-        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
-        pi0 = pi0_algo.estimate_from_hist(td_hist_data, as_factor=False)
-        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={pi0_algo.long_desc()}")
+        pi0 = self.pi0_algo.estimate_from_hist(td_hist_data, as_factor=False)
+        LOGGER.debug(f"pi0-estimate: pi0={pi0}, algo={self.pi0_algo.long_desc()}")
         return pi0
 
     def estimate_pi_factor_from_hist(self, td_hist_data: TDHistData) -> float:
-        pi0_algo = self.pi0_algo or Pi0EstAlgorithm.pi0_algo
-        pi_factor = pi0_algo.estimate_from_hist(td_hist_data, as_factor=True)
+        pi_factor = self.pi0_algo.estimate_from_hist(td_hist_data, as_factor=True)
         LOGGER.debug(
-            f"pi-factor estimate: pi_factor={pi_factor}, algo={pi0_algo.long_desc()}"
+            f"pi-factor est.: pi_factor={pi_factor}, algo={self.pi0_algo.long_desc()}"
         )
         return pi_factor
 

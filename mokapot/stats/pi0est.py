@@ -198,7 +198,7 @@ def pi0_from_hist_storey(
         estimation for false discovery rate control. R package version 2.38.0,
         http://github.com/jdstorey/qvalue.
     """
-    # todo: it would be nice, though not untrivial, to integrate this function
+    # todo: it would be nice, though not trivial, to integrate this function
     #  with the normal Storey pi0 estimation function.
 
     _, target_counts, decoy_counts = td_hist_data.as_counts()
