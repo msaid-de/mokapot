@@ -620,21 +620,21 @@ def compute_and_write_confidence(
 
     else:  # Here comes the streaming part
         LOGGER.info("Computing statistics for q-value and PEP assignment...")
-        # bin_edges = HistData.get_bin_edges(score_stats, clip=(50, 500))
-        base_bins = 200
-        factor = 10
-        bin_edges = HistData.get_bin_edges(
-            score_stats, clip=(base_bins * factor, base_bins * factor)
+        num_bins_coarse = 200
+        refinement_factor = 10
+        num_bins_fine = num_bins_coarse * refinement_factor
+        bin_edges_fine = HistData.get_bin_edges(
+            score_stats, clip=(num_bins_fine, num_bins_fine)
         )
         score_target_iterator = create_score_target_iterator(
             temp_reader.get_chunked_data_iterator(
                 chunk_size=CONFIDENCE_CHUNK_SIZE, columns=["score", "is_decoy"]
             )
         )
-        hist_data = TDHistData.from_score_target_iterator(
-            score_target_iterator, bin_edges
+        hist_data_fine = TDHistData.from_score_target_iterator(
+            score_target_iterator, bin_edges_fine
         )
-        if hist_data.decoys.counts.sum() == 0:
+        if hist_data_fine.decoys.counts.sum() == 0:
             LOGGER.warning(
                 "No decoy PSMs remain for confidence estimation. "
                 "Confidence estimates may be unreliable."
@@ -645,7 +645,7 @@ def compute_and_write_confidence(
             f"Estimating q-value assignment function for {level} "
             f"(using {QvalueAlgorithm.long_desc()} algorithm) ..."
         )
-        qvalues_func = QvalueAlgorithm.func_from_hist(hist_data)
+        qvalues_func = QvalueAlgorithm.func_from_hist(hist_data_fine)
 
         # Estimate peps function
         LOGGER.info(
@@ -653,8 +653,8 @@ def compute_and_write_confidence(
             f"(using {PepsAlgorithm.long_desc()} algorithm) ..."
         )
 
-        hist_data2 = hist_data.coarsen(factor)
-        peps_func = PepsAlgorithm.func_from_hist(hist_data2)
+        hist_data_coarse = hist_data_fine.coarsen(refinement_factor)
+        peps_func = PepsAlgorithm.func_from_hist(hist_data_coarse)
 
         # Assign q-values and PEPs
         LOGGER.info("Streaming q-value and PEP assignments...")
