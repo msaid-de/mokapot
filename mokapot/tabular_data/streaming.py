@@ -4,8 +4,9 @@ Helper classes and methods used for streaming of tabular data.
 
 from __future__ import annotations
 
+import heapq
 import warnings
-from typing import Generator, Callable, Iterator
+from typing import Callable, Generator, Iterator
 
 import numpy as np
 import pandas as pd
@@ -41,9 +42,7 @@ class JoinedTabularDataReader(TabularDataReader):
     def get_column_types(self) -> list:
         return sum([reader.get_column_types() for reader in self.readers], [])
 
-    def _subset_columns(
-        self, column_names: list[str] | None
-    ) -> list[list[str] | None]:
+    def _subset_columns(self, column_names: list[str] | None) -> list[list[str] | None]:
         if column_names is None:
             return [None for _ in self.readers]
         return [
@@ -60,9 +59,7 @@ class JoinedTabularDataReader(TabularDataReader):
         df = pd.concat(
             [
                 reader.read(columns=subset_columns)
-                for reader, subset_columns in zip(
-                    self.readers, subset_column_lists
-                )
+                for reader, subset_columns in zip(self.readers, subset_column_lists)
             ],
             axis=1,
         )
@@ -76,9 +73,7 @@ class JoinedTabularDataReader(TabularDataReader):
             reader.get_chunked_data_iterator(
                 chunk_size=chunk_size, columns=subset_columns
             )
-            for reader, subset_columns in zip(
-                self.readers, subset_column_lists
-            )
+            for reader, subset_columns in zip(self.readers, subset_column_lists)
         ]
 
         while True:
@@ -223,7 +218,10 @@ class MergedTabularDataReader(TabularDataReader):
         self,
         columns: list[str] | None = None,
         row_type: BufferType = BufferType.DataFrame,
+        check_sorting: bool = True,
     ) -> Iterator[pd.DataFrame | dict | np.record]:
+        # Define methods to iterate over dataframe, dicts or records and also
+        # to get specific column values from each of those data structures
         def iterate_over_df(df: pd.DataFrame) -> Iterator:
             for i in range(len(df)):
                 row = df.iloc[[i]]
@@ -244,6 +242,8 @@ class MergedTabularDataReader(TabularDataReader):
             records = df.to_records(index=False)
             return iter(records)
 
+        # Set iteration function and get_value function depending on current
+        # buffer type
         if row_type == BufferType.DataFrame:
             iterate_over_chunk = iterate_over_df
             get_value = get_value_df
@@ -255,15 +255,16 @@ class MergedTabularDataReader(TabularDataReader):
             get_value = get_value_dict
         else:
             raise ValueError(
-                "ret_type must be 'dataframe', 'records'"
-                f" or 'dicts', not {row_type}"
+                f"ret_type must be 'dataframe', 'records' or 'dicts', not {row_type}"
             )
 
+        # Get a row iterator from a chunked iterator
         def row_iterator_from_chunked(chunked_iter: Iterator) -> Iterator:
             for chunk in chunked_iter:
                 for row in iterate_over_chunk(chunk):
                     yield row
 
+        # Collect all iterators
         row_iterators = [
             row_iterator_from_chunked(
                 reader.get_chunked_data_iterator(
@@ -272,41 +273,44 @@ class MergedTabularDataReader(TabularDataReader):
             )
             for reader in self.readers
         ]
-        current_rows = [next(row_iterator) for row_iterator in row_iterators]
 
-        values = [get_value(row, self.priority_column) for row in current_rows]
-        while len(row_iterators):
-            if self.descending:
-                iterator_index = np.argmax(values)
-            else:
-                iterator_index = np.argmin(values)
+        # Use builtin merge function for merging row_iterators using a
+        # priority queue internally (O(1) lookup, O(log N) insert)
+        merged_iter = heapq.merge(
+            *row_iterators,
+            key=lambda row: get_value(row, self.priority_column),
+            reverse=self.descending,
+        )
 
-            row = current_rows[iterator_index]
-            yield row
+        if not check_sorting:
+            return merged_iter
 
-            try:
-                current_rows[iterator_index] = next(
-                    row_iterators[iterator_index]
-                )
-                new_value = get_value(
-                    current_rows[iterator_index], self.priority_column
-                )
-                if self.descending and new_value > values[iterator_index]:
+        def checked_iter():
+            # Note: directly yielding from this function is terribly slow, while
+            # first wrapping the iteration and checking into a generator function
+            # is much faster. I don't know why exactly - maybe it needs less saving
+            # and restoring of context when returning to the generator from the
+            # caller - but that's just wild guessing.
+            last_value = None
+            for row in merged_iter:
+                new_value = get_value(row, self.priority_column)
+                if last_value is None:
+                    last_value = new_value
+                if self.descending and new_value > last_value:
                     raise ValueError(
-                        f"Value {new_value} exceeds {self.priority_column}"
-                        " but should be descending"
+                        f"New value {new_value} for {self.priority_column} exceeds "
+                        f"previous value {last_value} but should be descending."
                     )
-                if not self.descending and new_value < values[iterator_index]:
+                if not self.descending and new_value < last_value:
                     raise ValueError(
-                        f"Value {new_value} lower than {self.priority_column}"
-                        " but should be ascending"
+                        f"New value {new_value} for {self.priority_column} lower "
+                        f"than previous value {last_value} but should be ascending."
                     )
+                last_value = new_value
 
-                values[iterator_index] = new_value
-            except StopIteration:
-                del row_iterators[iterator_index]
-                del current_rows[iterator_index]
-                del values[iterator_index]
+                yield row
+
+        return checked_iter()
 
     def get_chunked_data_iterator(
         self, chunk_size: int, columns: list[str] | None = None
@@ -352,8 +356,7 @@ def merge_readers(
         descending,
         reader_chunk_size=reader_chunk_size,
     )
-    iterator = reader.get_chunked_data_iterator(chunk_size=1)
-    return iterator
+    return reader.get_row_iterator()
 
 
 @typechecked
@@ -400,9 +403,7 @@ class BufferedWriter(TabularDataWriter):
 
     def __del__(self):
         if self.initialized and not self.finalized:
-            warnings.warn(
-                f"BufferedWriter not finalized (buffering: {self.writer})"
-            )
+            warnings.warn(f"BufferedWriter not finalized (buffering: {self.writer})")
 
     def _buffer_slice(
         self,
@@ -440,16 +441,13 @@ class BufferedWriter(TabularDataWriter):
         if self.buffer_type == BufferType.DataFrame:
             if not isinstance(data, pd.DataFrame):
                 raise TypeError(
-                    "Parameter `data` must be of type DataFrame,"
-                    f" not {type(data)}"
+                    f"Parameter `data` must be of type DataFrame, not {type(data)}"
                 )
 
             if self.buffer is None:
                 self.buffer = data.copy(deep=True)
             else:
-                self.buffer = pd.concat(
-                    [self.buffer, data], axis=0, ignore_index=True
-                )
+                self.buffer = pd.concat([self.buffer, data], axis=0, ignore_index=True)
         elif self.buffer_type == BufferType.Dicts:
             if isinstance(data, dict):
                 data = [data]
