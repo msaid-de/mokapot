@@ -4,9 +4,8 @@ from pytest import approx
 from typeguard import TypeCheckError
 
 from mokapot.stats.histdata import (
-    hist_data_from_iterator,
-    hist_data_from_scores,
     HistData,
+    TDHistData,
 )
 from mokapot.stats.statistics import OnlineStatistics
 
@@ -19,19 +18,21 @@ def test_hist_data_from_iterator():
         for i in range(0, len(scores), chunksize):
             yield scores[i : i + chunksize], targets[i : i + chunksize]
 
-    bins = np.histogram_bin_edges(scores, bins=31)
-    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_counts()
-    e1, t1, d1 = hist_data_from_iterator(
-        score_iterator(scores, targets), bin_edges=bins
+    bin_edges = np.histogram_bin_edges(scores, bins=31)
+    e0, t0, d0 = TDHistData.from_scores_targets(scores, targets, bin_edges).as_counts()
+    e1, t1, d1 = TDHistData.from_score_target_iterator(
+        score_iterator(scores, targets), bin_edges
     ).as_counts()
     assert e0 == approx(e1)
     assert t0 == approx(t1)
     assert d0 == approx(d1)
 
-    bins = np.histogram_bin_edges(scores, bins=17)
-    e0, t0, d0 = hist_data_from_scores(scores, targets, bins=bins).as_densities()
-    e1, t1, d1 = hist_data_from_iterator(
-        score_iterator(scores, targets, chunksize=7), bin_edges=bins
+    bin_edges = np.histogram_bin_edges(scores, bins=17)
+    e0, t0, d0 = TDHistData.from_scores_targets(
+        scores, targets, bin_edges
+    ).as_densities()
+    e1, t1, d1 = TDHistData.from_score_target_iterator(
+        score_iterator(scores, targets, chunksize=7), bin_edges
     ).as_densities()
     assert e0 == approx(e1)
     assert t0 == approx(t1)
@@ -51,6 +52,38 @@ def test_hist_data():
     assert len(bin_centers) == len(counts)
     assert bin_centers[0] == approx((bin_edges[0] + bin_edges[1]) / 2)
     assert bin_centers[-1] == approx((bin_edges[-2] + bin_edges[-1]) / 2)
+
+
+def test_histogram_coarsening():
+    N = 1000
+    x = np.concatenate([np.random.normal(size=N), np.random.normal(2, size=N)])
+    counts20, bin_edges20 = np.histogram(x, bins=20)
+    hist20 = HistData(bin_edges20, counts20)
+
+    hist5 = hist20.coarsen(factor=4)
+    counts5, bin_edges5 = np.histogram(x, bins=5)
+    assert hist5.bin_edges == approx(bin_edges5)
+    assert hist5.counts == approx(counts5)
+
+    with pytest.raises(ValueError):
+        hist20.coarsen(factor=3)
+
+    with pytest.raises(ValueError):
+        hist20.coarsen(factor=-4)
+
+    targets = np.random.uniform(0, 1, len(x)) > 0.6
+    tdhist20 = TDHistData.from_scores_targets(x, targets, bin_edges20)
+    tdhist5 = tdhist20.coarsen(factor=4)
+
+    target_counts5, _ = np.histogram(x[targets], bins=bin_edges5)
+    decoy_counts5, _ = np.histogram(x[~targets], bins=bin_edges5)
+
+    assert tdhist5.targets.bin_edges == approx(bin_edges5)
+    assert tdhist5.targets.counts == approx(target_counts5)
+    assert tdhist5.decoys.bin_edges == approx(bin_edges5)
+    assert tdhist5.decoys.counts == approx(decoy_counts5)
+
+    assert tdhist20.targets.bin_edges == approx(bin_edges20)
 
 
 def test_binning():

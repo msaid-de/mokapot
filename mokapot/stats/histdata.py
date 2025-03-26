@@ -30,8 +30,12 @@ class HistData:
     bin_edges: np.ndarray[float]
     counts: np.ndarray[int]
 
-    def __init__(self, bin_edges: np.ndarray[float], counts: np.ndarray[int]):
-        if len(bin_edges) != len(counts) + 1:
+    def __init__(
+        self, bin_edges: np.ndarray[float], counts: np.ndarray[int] | None = None
+    ) -> None:
+        if counts is None:
+            counts = np.zeros(len(bin_edges) - 1, dtype=int)
+        elif len(bin_edges) != len(counts) + 1:
             raise ValueError(
                 "`bin_edges` must have one more element than `counts` "
                 f"({len(bin_edges)=}, {len(counts)=})"
@@ -39,6 +43,45 @@ class HistData:
 
         self.bin_edges = bin_edges
         self.counts = counts
+
+    def update(self, data: np.ndarray[float]) -> None:
+        counts, _ = np.histogram(data, bins=self.bin_edges)
+        self.counts += counts
+
+    def coarsen(self, factor: int) -> HistData:
+        """
+        Coarsens the histogram by a specified factor.
+
+        This method reduces the resolution of the histogram by combining adjacent
+        bins into groups based on the specified `factor`. Bin counts are summed,
+        and edges are adjusted to form the new coarsened histogram.
+
+        Parameters
+        ----------
+        factor:
+            The coarsening factor. It combines this many adjacent bins into a single
+            one. Must be a positive integer and a divisor of the number of counts.
+
+        Returns
+        -------
+        HistData
+            A new `HistData` instance representing the coarsened histogram.
+
+        Raises
+        ------
+        ValueError
+            If the coarsening factor is not valid for the current histogram.
+        """
+        if factor <= 0 or len(self.counts) % factor != 0:
+            raise ValueError("Factor must be a positive divisor of the number of bins.")
+
+        # Reshape counts to group bins by the given factor and sum them
+        coarsened_counts = self.counts.reshape(-1, factor).sum(axis=1)
+
+        # Create new coarsened bin edges
+        coarsened_edges = self.bin_edges[::factor]
+
+        return HistData(coarsened_edges, coarsened_counts)
 
     @property
     def bin_centers(self) -> np.ndarray[float]:
@@ -75,6 +118,14 @@ class HistData:
         dx = np.diff(self.bin_edges)
         counts = self.counts.astype(float)
         return counts / (dx * counts.sum())
+
+    def sample(self, size):
+        prob = self.counts / self.counts.sum()
+        bin_indices = np.random.choice(len(prob), size=size, p=prob)
+        samples = np.random.uniform(
+            low=self.bin_edges[bin_indices], high=self.bin_edges[bin_indices + 1]
+        )
+        return samples
 
     @staticmethod
     def bin_size_sturges(stats: OnlineStatistics) -> float:
@@ -218,27 +269,79 @@ class TDHistData:
     def __init__(
         self,
         bin_edges: np.ndarray[float],
-        target_counts: np.ndarray[int],
-        decoy_counts: np.ndarray[int],
+        target_counts: np.ndarray[int] | None = None,
+        decoy_counts: np.ndarray[int] | None = None,
     ):
         self.targets = HistData(bin_edges, target_counts)
         self.decoys = HistData(bin_edges, decoy_counts)
 
+    def update(self, scores: np.ndarray[float], targets: np.ndarray[bool]) -> None:
+        self.targets.update(scores[targets])
+        self.decoys.update(scores[~targets])
+
     @staticmethod
     def from_scores_targets(
-        bin_edges: np.ndarray[float],
         scores: np.ndarray[float],
         targets: np.ndarray[bool],
+        bin_edges: np.ndarray[float] | int | str | None = None,
     ) -> TDHistData:
-        """Create TDHistData object from scores and targets."""
-        return hist_data_from_scores(scores, targets, bin_edges)
+        """Generate histogram data from scores and target/decoy information.
+
+        Parameters
+        ----------
+        scores:
+            A numpy array containing the scores for each target and decoy peptide.
+        targets:
+            A boolean array indicating whether each peptide is a target (True) or a
+            decoy (False).
+        bin_edges:
+            Either: The number of bins to use for the histogram. Or: the edges of
+            the bins to take. Or: None, which lets numpy determines the bins from
+            all scores (which is the default).
+
+        Returns
+        -------
+        TDHistData:
+            A `TDHistData` object, encapsulating the histogram data.
+        """
+        if isinstance(bin_edges, np.ndarray):
+            bin_edges = bin_edges
+        else:
+            bin_edges = np.histogram_bin_edges(scores, bins=bin_edges or 2000)
+
+        td_hist_data = TDHistData(bin_edges)
+        td_hist_data.update(scores, targets)
+        return td_hist_data
 
     @staticmethod
     def from_score_target_iterator(
-        bin_edges: np.ndarray[float], score_target_iterator: Iterator
+        score_target_iterator: Iterator, bin_edges: np.ndarray[float]
     ) -> TDHistData:
-        """Create TDHistData from an iterator over scores and targets."""
-        return hist_data_from_iterator(score_target_iterator, bin_edges)
+        """Generate histogram data from scores and target/decoy information
+        provided by an iterator.
+
+        This is for streaming algorithms.
+
+        Parameters
+        ----------
+        score_target_iterator:
+            An iterator that yields scores and target/decoy information. For each
+            iteration a tuple consisting of a score array and a corresponding
+            target must be yielded.
+        bin_edges:
+            The bins to use for the histogram. Must be provided (since they cannot
+            be determined at the start of the algorithm).
+
+        Returns
+        -------
+        TDHistData:
+            A `TDHistData` object, encapsulating the histogram data.
+        """
+        td_hist_data = TDHistData(bin_edges)
+
+        for scores, targets in score_target_iterator:
+            td_hist_data.update(scores, targets)
+        return td_hist_data
 
     def as_counts(
         self,
@@ -260,72 +363,15 @@ class TDHistData:
             self.decoys.density,
         )
 
+    def coarsen(self, factor: int) -> TDHistData:
+        # Create a new TDHistData instance bypassing init ...
+        coarsened_data = TDHistData.__new__(TDHistData)
+        # because we later set the members explicitly anyway
+        coarsened_data.targets = self.targets.coarsen(factor)
+        coarsened_data.decoys = self.decoys.coarsen(factor)
+        return coarsened_data
 
-@typechecked
-def hist_data_from_scores(
-    scores: np.ndarray[float],
-    targets: np.ndarray[bool],
-    bins: np.ndarray[float] | int | str | None = None,
-) -> TDHistData:
-    """Generate histogram data from scores and target/decoy information.
-
-    Parameters
-    ----------
-    scores:
-        A numpy array containing the scores for each target and decoy peptide.
-    targets:
-        A boolean array indicating whether each peptide is a target (True) or a
-        decoy (False).
-    bins:
-        Either: The number of bins to use for the histogram. Or: the edges of
-        the bins to take. Or: None, which lets numpy determines the bins from
-        all scores (which is the default).
-
-    Returns
-    -------
-    TDHistData:
-        A `TDHistData` object, encapsulating the histogram data.
-    """
-    if isinstance(bins, np.ndarray):
-        bin_edges = bins
-    else:
-        bin_edges = np.histogram_bin_edges(scores, bins=bins or "scott")
-
-    target_counts, _ = np.histogram(scores[targets], bins=bin_edges)
-    decoy_counts, _ = np.histogram(scores[~targets], bins=bin_edges)
-
-    return TDHistData(bin_edges, target_counts, decoy_counts)
-
-
-@typechecked
-def hist_data_from_iterator(
-    score_target_iterator, bin_edges: np.ndarray[float]
-) -> TDHistData:
-    """Generate histogram data from scores and target/decoy information
-    provided by an iterator.
-
-    This is for streaming algorithms.
-
-    Parameters
-    ----------
-    score_target_iterator:
-        An iterator that yields scores and target/decoy information. For each
-        iteration a tuple consisting of a score array and a corresponding
-        target must be yielded.
-    bin_edges:
-        The bins to use for the histogram. Must be provided (since they cannot
-        be determined at the start of the algorithm).
-
-    Returns
-    -------
-    TDHistData:
-        A `TDHistData` object, encapsulating the histogram data.
-    """
-
-    target_counts = np.zeros(len(bin_edges) - 1, dtype=int)
-    decoy_counts = np.zeros(len(bin_edges) - 1, dtype=int)
-    for scores, targets in score_target_iterator:
-        target_counts += np.histogram(scores[targets], bins=bin_edges)[0]
-        decoy_counts += np.histogram(scores[~targets], bins=bin_edges)[0]
-
-    return TDHistData(bin_edges, target_counts, decoy_counts)
+    def get_decoy_target_ratio(self) -> float:
+        target_count = self.targets.counts.sum()
+        decoy_count = self.decoys.counts.sum()
+        return decoy_count / target_count

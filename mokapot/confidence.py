@@ -32,10 +32,6 @@ from mokapot.dataset import OnDiskPsmDataset
 from mokapot.picked_protein import picked_protein
 from mokapot.stats.algorithms import PepsAlgorithm, QvalueAlgorithm
 from mokapot.stats.histdata import HistData, TDHistData
-from mokapot.stats.peps import (
-    peps_func_from_hist_nnls,
-)
-from mokapot.stats.qvalues import qvalues_func_from_hist
 from mokapot.stats.statistics import OnlineStatistics
 from mokapot.tabular_data import (
     BufferType,
@@ -624,27 +620,43 @@ def compute_and_write_confidence(
 
     else:  # Here comes the streaming part
         LOGGER.info("Computing statistics for q-value and PEP assignment...")
-        bin_edges = HistData.get_bin_edges(score_stats, clip=(50, 500))
+        num_bins_coarse = 200
+        refinement_factor = 10
+        num_bins_fine = num_bins_coarse * refinement_factor
+        bin_edges_fine = HistData.get_bin_edges(
+            score_stats, clip=(num_bins_fine, num_bins_fine)
+        )
         score_target_iterator = create_score_target_iterator(
             temp_reader.get_chunked_data_iterator(
                 chunk_size=CONFIDENCE_CHUNK_SIZE, columns=["score", "is_decoy"]
             )
         )
-        hist_data = TDHistData.from_score_target_iterator(
-            bin_edges, score_target_iterator
+        hist_data_fine = TDHistData.from_score_target_iterator(
+            score_target_iterator, bin_edges_fine
         )
-        if hist_data.decoys.counts.sum() == 0:
+        if hist_data_fine.decoys.counts.sum() == 0:
             LOGGER.warning(
                 "No decoy PSMs remain for confidence estimation. "
                 "Confidence estimates may be unreliable."
             )
 
-        LOGGER.info("Estimating q-value and PEP assignment functions...")
-        # todo: check that pi_factor thingy...
-        # Should also use the "algorithms"
-        qvalues_func = qvalues_func_from_hist(hist_data, pi_factor=1.0)
-        peps_func = peps_func_from_hist_nnls(hist_data, pi_factor=1.0)
+        # Estimate q-value function
+        LOGGER.info(
+            f"Estimating q-value assignment function for {level} "
+            f"(using {QvalueAlgorithm.long_desc()} algorithm) ..."
+        )
+        qvalues_func = QvalueAlgorithm.func_from_hist(hist_data_fine)
 
+        # Estimate peps function
+        LOGGER.info(
+            f"Estimating PEPs assignment function for {level} "
+            f"(using {PepsAlgorithm.long_desc()} algorithm) ..."
+        )
+
+        hist_data_coarse = hist_data_fine.coarsen(refinement_factor)
+        peps_func = PepsAlgorithm.func_from_hist(hist_data_coarse)
+
+        # Assign q-values and PEPs
         LOGGER.info("Streaming q-value and PEP assignments...")
         for df_chunk in temp_reader.get_chunked_data_iterator(
             chunk_size=CONFIDENCE_CHUNK_SIZE

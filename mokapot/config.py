@@ -321,7 +321,7 @@ def create_config_parser():
     parser.add_argument(
         "--suppress_warnings",
         default=False,
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help=(
             "Suppress warning messages when running mokapot. "
             "Should only be used when running mokapot in production."
@@ -340,7 +340,7 @@ def create_config_parser():
     parser.add_argument(
         "--stream_confidence",
         default=False,
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help=("Specify whether confidence assignment shall be streamed."),
     )
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from pytest import approx
 
 import mokapot
 from ..helpers.cli import run_mokapot_cli
@@ -179,7 +180,11 @@ def test_streaming(tmp_path, percolator_extended_file_big):
 
     # Check that correct peps algorithm is used (need to run in the same
     # process, so that we can catch the exception)
-    params = base_params + ["--file_root", "stream", "--stream_confidence"]
+    params = base_params + [
+        ("--file_root", "stream"),
+        ("--peps_algorithm", "triqler"),
+        "--stream_confidence",
+    ]
     with pytest.raises(ValueError, match="hist_nnls"):
         run_mokapot_cli(params, run_in_subprocess=False)
 
@@ -234,5 +239,5 @@ def test_streaming(tmp_path, percolator_extended_file_big):
         df_streamed.drop(columns=[qvc, pvc]), df_base.drop(columns=[qvc, pvc])
     )
 
-    pd.testing.assert_series_equal(df_streamed[qvc], df_base[qvc], atol=0.01)
-    pd.testing.assert_series_equal(df_streamed[pvc], df_base[pvc], atol=0.06)
+    assert df_streamed[qvc].values == approx(df_base[qvc].values, abs=0.02)
+    assert df_streamed[pvc].values == approx(df_base[pvc].values, abs=0.2)

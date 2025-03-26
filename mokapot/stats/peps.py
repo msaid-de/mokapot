@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from typing import Callable
 
 import numpy as np
 from triqler import qvality
 from typeguard import typechecked
 
-from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.monotonize import fit_nnls, monotonize_nnls
 from mokapot.stats.pi0est import pi0_from_pdfs_by_slope
 from mokapot.stats.utils import pdfs_from_scores
@@ -15,68 +17,10 @@ from mokapot.stats.utils import pdfs_from_scores
 LOGGER = logging.getLogger(__name__)
 
 
-PEP_ALGORITHM = {
-    "qvality": lambda scores, targets, is_tdc: peps_from_scores_qvality(
-        scores, targets, is_tdc, use_binary=False
-    ),
-    "qvality_bin": lambda scores, targets, is_tdc: peps_from_scores_qvality(
-        scores, targets, is_tdc, use_binary=True
-    ),
-    "kde_nnls": lambda scores, targets, is_tdc: peps_from_scores_kde_nnls(
-        scores, targets, is_tdc
-    ),
-    "hist_nnls": lambda scores, targets, is_tdc: peps_from_scores_hist_nnls(
-        scores, targets, is_tdc
-    ),
-}
-
-
 class PepsConvergenceError(Exception):
     """Raised when nnls iterations do not converge."""
 
     pass
-
-
-@typechecked
-def peps_from_scores(
-    scores: np.ndarray[float],
-    targets: np.ndarray[bool],
-    is_tdc: bool,
-    pep_algorithm: str = "qvality",
-) -> np.ndarray[float]:
-    """Compute PEPs from scores.
-
-    Parameters
-    ----------
-    scores:
-        A numpy array containing the scores for each target and decoy peptide.
-    targets:
-        A boolean array indicating whether each peptide is a target (True) or a
-        decoy (False).
-    pep_algorithm:
-        The PEPS calculation algorithm to use. Defaults to 'qvality'.
-    is_tdc:
-        Scores and targets come from competition, rather than separate search.
-    pep_algorithm:
-        PEPS algorithm to use. Defaults to 'qvality'. Possible values are the
-        keys of `PEP_ALGORITHM`.
-
-    Returns
-    -------
-    array:
-        The PEPS (Posterior Error Probabilities) calculated using the specified
-        algorithm.
-
-    Raises
-    ------
-    ValueError
-        If the specified algorithm is unknown.
-    """
-    pep_function = PEP_ALGORITHM[pep_algorithm]
-    if pep_function is not None:
-        return pep_function(scores, targets, is_tdc)
-    else:
-        raise ValueError(f"Unknown pep algorithm in peps_from_scores: {pep_algorithm}")
 
 
 @typechecked
@@ -144,6 +88,22 @@ def peps_from_scores_qvality(
         qvality.VERB = old_verbosity
 
     return peps
+
+
+def is_qvality_on_path():
+    """
+    Check whether qvality is executable and on the system path.
+
+    Returns:
+        bool: True if the qvality is callable, False otherwise.
+    """
+    # Check if the executable exists on the path
+    path = shutil.which("qvality")
+    if not path:
+        return False
+
+    # Check if the file is executable
+    return os.access(path, os.X_OK)
 
 
 @typechecked
@@ -231,6 +191,7 @@ def peps_from_scores_hist_nnls(
     pi_factor: float = 1.0,
     scale_to_one: bool = False,
     weight_exponent: float = -1.0,
+    bin_edges: str | int | np.ndarray[float] | None = None,
 ):
     """Calculate the PEP (Posterior Error Probability) estimates from scores
     and targets using the NNLS (Non-negative Least Squares) method.
@@ -267,7 +228,7 @@ def peps_from_scores_hist_nnls(
         Array of PEP estimates at the scores of interest.
     """
 
-    hist_data = hist_data_from_scores(scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets, bin_edges)
     peps_func = peps_func_from_hist_nnls(
         hist_data, pi_factor, scale_to_one, weight_exponent
     )

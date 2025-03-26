@@ -6,9 +6,10 @@ import json
 
 import numpy as np
 import pytest
+from pytest import approx
 from scipy import stats
 
-from mokapot.stats.histdata import hist_data_from_scores, TDHistData
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.peps import peps_from_scores_hist_nnls
 from mokapot.stats.pi0est import pi0_from_pvalues_storey
 from mokapot.stats.qvalues import (
@@ -21,6 +22,7 @@ from mokapot.stats.qvalues import (
 )
 from mokapot.stats.tdmodel import STDSModel
 from tests.helpers.utils import TestOutcome
+from .helpers import create_tdmodel
 
 
 @pytest.fixture
@@ -202,7 +204,7 @@ def test_qvalues_from_hist_desc(desc_scores):
     bin_edges = np.linspace(0, 11, num=371)
     bin_edges = np.unique(np.sort(np.concatenate((bin_edges, scores))))
 
-    hist_data = TDHistData.from_scores_targets(bin_edges, scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets, bin_edges)
     qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=1)
     qvals = qvalue_func(scores)
 
@@ -214,7 +216,7 @@ def test_compare_rand_qvalues_from_hist_vs_count(rand_scores_stds, pi_factor):
     # Compare the q-values computed via counts with those computed via
     # histogram on a dataset of a few thousand random scores
     scores, targets, _ = rand_scores_stds
-    hist_data = hist_data_from_scores(scores, targets)
+    hist_data = TDHistData.from_scores_targets(scores, targets)
     qvalue_func = qvalues_func_from_hist(hist_data, pi_factor=pi_factor)
     qvals_hist = qvalue_func(scores)
     qvals_counts = qvalues_from_counts(scores, targets, pi_factor=pi_factor)
@@ -248,3 +250,30 @@ def test_qvalues_storey():
     )
     qvals = qvalues_from_pvalues(pvals, pi0=pi0est.pi0)
     np.testing.assert_almost_equal(qvals, qvals_expect)
+
+
+@pytest.mark.parametrize("rho0", [0.1, 0.3, 0.8])
+@pytest.mark.parametrize("discrete", [True, False])
+@pytest.mark.parametrize("is_tdc", [True, False])
+def test_qvalues_from_hist_on_tdmodel(is_tdc, discrete, rho0):
+    model = create_tdmodel(is_tdc, rho0, discrete, delta=2, max_dev_z=10)
+    N = 10000
+    scores, targets, is_fd = model.sample_scores(N)
+    if discrete:
+        # If the discrete values are not uniformly spaces, this makes it harder
+        # for the qvalue function. Otherwise, certain issues/bugs are not caught.
+        scores = scores**1.1
+
+    pi0 = model.pi0_from_data(targets, is_fd)
+    pi_factor = pi0 * sum(~targets) / sum(targets)
+
+    import mokapot.stats.qvalues as qvalues
+
+    qvals0 = qvalues.qvalues_from_counts(scores, targets, pi_factor=pi_factor)
+
+    bin_edges = np.histogram_bin_edges(scores, bins=1000)
+    histdata = TDHistData.from_scores_targets(scores, targets, bin_edges=bin_edges)
+    qvfunc = qvalues.qvalues_func_from_hist(histdata, pi_factor=pi_factor)
+    qvals1 = qvfunc(scores)
+
+    assert qvals1 == approx(qvals0, abs=0.01)

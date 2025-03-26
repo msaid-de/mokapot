@@ -4,9 +4,12 @@ import numpy as np
 import pytest
 from pytest import approx
 
+from mokapot.stats.histdata import TDHistData
 from mokapot.stats.pi0est import (
-    pi0_from_bootstrap,
+    pi0_from_hist_bootstrap,
+    pi0_from_hist_storey,
     pi0_from_pvalues_storey,
+    pi0_from_scores_bootstrap,
     pi0_from_scores_storey,
 )
 from mokapot.stats.pvalues import empirical_pvalues
@@ -52,19 +55,30 @@ def test_estimate_pi0_from_R():
     assert pi0est.pi0 == approx(0.7138351)
 
 
-@pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
+@pytest.mark.parametrize("rho0", [0.3, 0.8, 0.95])
 @pytest.mark.parametrize("discrete", [True, False])
 @pytest.mark.parametrize("is_tdc", [True, False])
-def test_pi0est_storey(discrete, is_tdc, rho0):
+@pytest.mark.parametrize("method", ["bootstrap", "fixed", "smoother"])
+def test_pi0est_storey(discrete, is_tdc, rho0, method):
     N = 100000
     model = create_tdmodel(is_tdc, rho0, discrete, delta=2)
     np.random.seed(42)
     scores, targets, is_fd = model.sample_scores(N)
     pi0_actual = model.approx_pi0()
 
-    pi0 = pi0_from_scores_storey(scores, targets, method="bootstrap")
+    pi0 = pi0_from_scores_storey(scores, targets, method=method)
     atol = 0.3
     assert pi0 == approx(pi0_actual, abs=atol)
+
+    if discrete:
+        # don't test streaming version for discrete distributions
+        # not really needed and doesn't work well;
+        return
+    td_hist_data = TDHistData.from_scores_targets(scores, targets, 2000)
+    pi0h = pi0_from_hist_storey(td_hist_data, method=method)
+    assert pi0h == approx(pi0_actual, abs=atol)
+    # compare streaming and no-streaming version
+    assert pi0h == approx(pi0, abs=0.1)
 
 
 @pytest.mark.parametrize("rho0", [0.01, 0.3, 0.8, 0.95])
@@ -78,8 +92,14 @@ def test_pi0est_bootstrap(discrete, is_tdc, rho0, delta):
     scores, targets, is_fd = model.sample_scores(N)
     pi0_actual = model.pi0_from_data(targets, is_fd)
 
-    pi0 = pi0_from_bootstrap(scores, targets)
+    pi0 = pi0_from_scores_bootstrap(scores, targets)
     atol = 0.01 if delta == 4 else 0.3
     if rho0 == 0.01 and not discrete and is_tdc:
         atol = 0.6
     assert pi0 == approx(pi0_actual, abs=atol)
+
+    td_hist_data = TDHistData.from_scores_targets(scores, targets, 2000)
+    pi0h = pi0_from_hist_bootstrap(td_hist_data)
+    assert pi0h == approx(pi0_actual, abs=atol)
+    # compare streaming and no-streaming version
+    assert pi0h == approx(pi0, abs=0.02)

@@ -100,6 +100,9 @@ def rollup_src_dirs(tmp_path_factory):
 )
 def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
     """Test that basic cli works."""
+
+    # "suffix", [".csv", ".parquet"],
+
     # rollup_dest_dir = tmp_path / suffix
     rollup_src_dir, rollup_src_dir_parquet = rollup_src_dirs
 
@@ -128,36 +131,36 @@ def test_rollup_10000(rollup_src_dirs, suffix, tmp_path):
         df = TabularDataReader.from_path(file).read()
         return df
 
+    # Compute standard q-values
     df0 = brew_rollup_and_read_df("rollup0")
     qval_column = "q-value"
 
-    # Note: this maximum difference is relatively large here (about 0.048),
-    # because, the scores are very concentrated around several values (nearly
-    # discrete) and the streaming (histogram) method is smoothing this out, what
-    # the pure counting method does not do.
-    # Todo: maybe it would be worthwile to have a much finer histogram with
-    #   much more bins for q-value calculation then for peps calculation
+    # Compute with streaming enabled
     df1 = brew_rollup_and_read_df("rollup1", ["--stream_confidence"])
-    assert_series_equal(df0[qval_column], df1[qval_column], atol=0.05)
-    assert estimate_abs_int(df0.score, df1[qval_column] - df0[qval_column]) < 0.05
+    assert_series_equal(df0[qval_column], df1[qval_column], atol=0.005)
+    assert estimate_abs_int(df0.score, df1[qval_column] - df0[qval_column]) < 0.005
     assert (
         estimate_abs_int(df0.score, df1.posterior_error_prob - df0.posterior_error_prob)
         < 0.03
     )
 
+    # Compute with storey but standard pi0 estimation
     df2 = brew_rollup_and_read_df("rollup2", [("--qvalue_algorithm", "storey")])
     assert_series_equal(df0[qval_column], df2[qval_column], atol=0.001)
     assert_allclose(df0[qval_column], df2[qval_column], atol=0.001)
     assert estimate_abs_int(df0.score, df2[qval_column] - df0[qval_column]) < 0.001
 
+    # Compute with storey and storey  pi0-estimation with fixed lambda
     df3 = brew_rollup_and_read_df(
-        "rollup2",
+        "rollup3",
         [("--qvalue_algorithm", "storey"), ("--pi0_algorithm", "storey_fixed")],
     )
-    assert not all(df2[qval_column] == df3[qval_column])
-    assert_allclose(
-        df2[qval_column], df3[qval_column], atol=0.3
-    )  # todo: check is this real?
+    assert not all(df3[qval_column] == df2[qval_column])
+    # results are somewhat different due to different pi0-estimation
+    assert_allclose(df3[qval_column], df0[qval_column], atol=0.3)
+    # scaled with the pi0 ratio they are almost identical
+    ratio = df3[qval_column][0] / df0[qval_column][0]
+    assert_allclose(df3[qval_column], ratio * df0[qval_column], atol=1e-5)
 
 
 def test_compute_rollup_levels():

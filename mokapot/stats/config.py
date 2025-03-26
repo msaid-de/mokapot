@@ -1,7 +1,5 @@
 import argparse
 
-# todo: change to pydantic based configuration
-
 
 def add_config_args(parser: argparse.ArgumentParser):
     parser.add_argument(
@@ -17,17 +15,18 @@ def add_config_args(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--peps_error",
         default=False,
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         help="Raise error when all PEPs values are equal to 1.",
     )
 
     parser.add_argument(
         "--peps_algorithm",
-        default="qvality",
-        choices=["qvality", "qvality_bin", "kde_nnls", "hist_nnls"],
+        default="default",
+        choices=["default", "triqler", "qvality", "kde_nnls", "hist_nnls"],
         help=(
-            "Specify the algorithm for pep computation. 'qvality_bin' works "
-            "only if the qvality binary is on the search path"
+            "Specify the algorithm for pep computation. 'qvality' works "
+            "only if the qvality binary is on the search path. 'default' uses "
+            "'triqler' if streaming is not enabled, and 'hist_nnls' otherwise."
         ),
     )
 
