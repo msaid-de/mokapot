@@ -4,7 +4,7 @@ import logging
 from typing import List, TypeVar
 
 import numpy as np
-from scipy.optimize._nnls import _nnls
+from scipy.optimize import nnls
 from typeguard import typechecked
 
 NumericArray = TypeVar(
@@ -139,9 +139,7 @@ def monotonize_nnls(
         D = np.diag(np.sqrt(w))
         A = D.dot(A)
         x = D.dot(x)
-    d, _, mode = _nnls(A, x)
-    if mode != 1:
-        LOGGER.debug("\t - Warning: nnls went into loop. Taking last solution.")
+    d, _ = nnls(A, x)
 
     xm = np.cumsum(d)
     return xm
@@ -223,19 +221,7 @@ def fit_nnls(n, k, ascending=True, *, weight_exponent=-1.0, erase_zeros=False):
             U = make_perm_mat(np.arange(sum(nnz)), nnz.nonzero()[0])
             W = U @ W
 
-    # The default tolerance of nnls is too low, leading sometimes to
-    # non-convergent iterations and subsequent failures. A good tolerance
-    # should probably be related to the condition number of `W @ A` and to
-    # the error in `W @ k` (numerical and statistical, where the latter is
-    # probably much, much larger than the former). Since this is a) difficult
-    # to estimate anyway and b) run-time consuming, we settle here for a
-    # fixed tolerance, # which a) seems large enough to never lead to
-    # non-convergence and b) is fitting for the typical condition numbers and
-    # values of k seen in experiments.
-    tol = 1e-7
-    d, _, mode = _nnls(W @ A @ R, W @ k, tol=tol)
-    if mode != 1:
-        LOGGER.debug("\t - Warning: nnls went into loop. Taking last solution.")
+    d, _ = nnls(W @ A @ R, W @ k)
     p = np.cumsum(R @ d)
 
     if not ascending:
