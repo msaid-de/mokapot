@@ -4,7 +4,9 @@ Helper classes and methods used for streaming of tabular data.
 
 from __future__ import annotations
 
+import errno
 import heapq
+import logging
 import warnings
 from typing import Callable, Generator, Iterator
 
@@ -17,6 +19,8 @@ from mokapot.tabular_data import (
     TabularDataReader,
     TabularDataWriter,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 @typechecked
@@ -292,23 +296,38 @@ class MergedTabularDataReader(TabularDataReader):
             # and restoring of context when returning to the generator from the
             # caller - but that's just wild guessing.
             last_value = None
-            for row in merged_iter:
-                new_value = get_value(row, self.priority_column)
-                if last_value is None:
+            try:
+                for row in merged_iter:
+                    new_value = get_value(row, self.priority_column)
+                    if last_value is None:
+                        last_value = new_value
+                    if self.descending and new_value > last_value:
+                        raise ValueError(
+                            f"New value {new_value} for {self.priority_column} exceeds "
+                            f"previous value {last_value} but should be descending."
+                        )
+                    if not self.descending and new_value < last_value:
+                        raise ValueError(
+                            f"New value {new_value} for {self.priority_column} lower "
+                            f"than previous value {last_value} but should be ascending."
+                        )
                     last_value = new_value
-                if self.descending and new_value > last_value:
-                    raise ValueError(
-                        f"New value {new_value} for {self.priority_column} exceeds "
-                        f"previous value {last_value} but should be descending."
-                    )
-                if not self.descending and new_value < last_value:
-                    raise ValueError(
-                        f"New value {new_value} for {self.priority_column} lower "
-                        f"than previous value {last_value} but should be ascending."
-                    )
-                last_value = new_value
 
-                yield row
+                    yield row
+            except OSError as e:
+                # If the error was caused by too many open files (EMFILE) we
+                # supply extra information to the user and re-raise the exeception
+                # to be (possibly) handled by a further exception handler
+                if e.errno == errno.EMFILE:
+                    min = len(row_iterators)
+                    LOGGER.info(
+                        "Cannot open all necessary files simultaneously. Please \n\t"
+                        "raise the limit imposed by the OS by using the `ulimit`\n\t"
+                        f"command. Since at least {min} files are to be opened\n\t"
+                        f"something like `ulimit -S -n {min + 10}` will probably\n\t"
+                        "suffice."
+                    )
+                raise
 
         return checked_iter()
 
