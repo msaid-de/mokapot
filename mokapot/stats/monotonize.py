@@ -4,7 +4,7 @@ import logging
 from typing import List, TypeVar
 
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize._nnls import _nnls
 from typeguard import typechecked
 
 NumericArray = TypeVar(
@@ -12,6 +12,16 @@ NumericArray = TypeVar(
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def nnls(A, b, max_iter=None):
+    try:
+        x, rnorm, mode = _nnls(A, b, max_iter, atol=1e-5)
+    except TypeError:
+        x, rnorm, mode = _nnls(A, b, max_iter)
+    if mode == 1:
+        LOGGER.debug("\t - Warning: nnls went into loop. Taking last solution.")
+    return x, rnorm
 
 
 @typechecked
